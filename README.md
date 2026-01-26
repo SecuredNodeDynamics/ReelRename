@@ -1,5 +1,5 @@
-![Version](https://img.shields.io/github/v/release/artyomjanzen1/ReelRename)
-![License](https://img.shields.io/github/license/artyomjanzen1/ReelRename)
+![Version](https://img.shields.io/github/v/release/SecuredNodeDynamics/ReelRename)
+![License](https://img.shields.io/github/license/SecuredNodeDynamics/ReelRename)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
 # 🎬 ReelRename
@@ -11,7 +11,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 <p align="center">
-  <img src="screenshots/ReelRename.v1.1.0.png" alt="ReelRename Main Window" width="900">
+  <img src="screenshots/ReelRename.v1.2.0.png" alt="ReelRename Main Window" width="900">
   <br>
   <em>Main interface showing preview-first renaming workflow</em>
 </p>
