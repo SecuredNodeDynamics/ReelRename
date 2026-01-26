@@ -97,3 +97,16 @@ Your API key is stored locally on your machine, per user:
     /home/<your-username>/.reelrename/config.json
 
 The key is never uploaded, logged, or shared.
+
+## ⚠️ Notes
+
+    A TMDB API key is required for:
+
+        Automatic title matching
+
+        Accurate release year detection
+
+        Media classification (Movie / TV / Anime)
+
+    Without an API key, ReelRename will still rename files, but metadata enrichment will be disabled.
+
