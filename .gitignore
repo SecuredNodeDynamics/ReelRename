@@ -221,3 +221,6 @@ Output/
 
 # JetBrains / PyCharm (recommended)
 .idea/
+
+# Root .py files
+github_sync.py
