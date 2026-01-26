@@ -60,3 +60,40 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 2. Make it executable:
    ```bash
    chmod +x ReelRename-x86_64.AppImage
+
+### 🔑 TMDB API Key Setup (Required for Metadata)
+
+> ReelRename uses The Movie Database (TMDB) to resolve accurate movie and TV show titles, release years, and metadata.
+> To enable full metadata features, you must provide your own free TMDB API key.
+
+## 📌 Step 1: Create a TMDB Account
+
+   >  Visit https://www.themoviedb.org/
+   >  Sign up for a free account (or log in if you already have one)
+
+## 📌 Step 2: Request an API Key
+
+  > Go to https://www.themoviedb.org/settings/api
+  > Click Create under API Key
+  > Select Developer
+  > Complete the short application form
+    (Example description: Personal media organization tool)
+  Once approved, you will receive an API Key (v3 auth).
+
+## 📌 Step 3: Add the API Key in ReelRename
+
+  > Launch ReelRename
+  > Open the menu:
+    [Connect → TMDB API Key]
+  > Paste your API key and save
+
+## 📂 Where the API Key Is Stored
+Your API key is stored locally on your machine, per user:
+    
+    Windows
+    C:\Users\<your-username>\.reelrename\config.json
+
+    Linux
+    /home/<your-username>/.reelrename/config.json
+
+The key is never uploaded, logged, or shared.
