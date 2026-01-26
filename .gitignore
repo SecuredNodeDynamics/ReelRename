@@ -205,3 +205,19 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- ReelRename / release artifacts ---
+release/
+*.exe
+*.msi
+*.AppImage
+*.zip
+*.7z
+*.tar.gz
+
+# Inno Setup output (common)
+Output/
+*.iss~  # backup files some editors create
+
+# JetBrains / PyCharm (recommended)
+.idea/
