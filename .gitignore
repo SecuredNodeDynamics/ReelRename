@@ -97,5 +97,3 @@ Desktop.ini
 # Project-specific
 github_sync.py
 installer.iss
-screenshots/
-        except Exception:
