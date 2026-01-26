@@ -226,3 +226,4 @@ Output/
 github_sync.py
 .env
 installer.iss
+release/
