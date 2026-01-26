@@ -6,6 +6,12 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 
 ---
 
+<p align="center">
+  <img src="screenshots/ReelRename.v1.1.0.png" alt="ReelRename Main Window" width="900">
+</p>
+
+---
+
 ## ✨ Key Features
 
 - 📂 Drag & drop files **or entire folders**
