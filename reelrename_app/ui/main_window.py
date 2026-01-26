@@ -31,7 +31,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.0"  # bump as you like
+APP_VERSION = "1.1.1"  # bump as you like
 
 
 class DropHint(QLabel):
@@ -68,6 +68,9 @@ class MainWindow(QMainWindow):
         self._locked: Set[str] = set()
         self._rendering = False
 
+        # NEW: edit guard to avoid recursive cellChanged events
+        self._editing = False
+
         # Year lookup helpers
         self.year_cache = YearCache()
         self.tmdb = TmdbClient()
@@ -93,7 +96,7 @@ class MainWindow(QMainWindow):
         self.action_set_tmdb_key.triggered.connect(self._set_tmdb_api_key)
         connect_menu.addAction(self.action_set_tmdb_key)
 
-        # NEW: Help menu
+        # Help menu
         help_menu = self.menuBar().addMenu("Help")
 
         self.action_user_guide = QAction("User Guide", self)
@@ -269,7 +272,7 @@ QTableWidget::item:hover {
 
         <h3>4) Manual edits &amp; locking</h3>
         <ul>
-          <li>You can edit <b>Proposed Destination</b> directly (double click).</li>
+          <li>You can edit <b>Proposed Name</b> or <b>Proposed Destination</b> directly (double click).</li>
           <li>Right-click a row for options:
             <ul>
               <li><b>Lock Row</b>: freezes the destination for that row.</li>
@@ -553,10 +556,12 @@ QTableWidget::item:hover {
                 self.table.setItem(r, self.COL_NAME, QTableWidgetItem(item.name))
                 self.table.setItem(r, self.COL_FOLDER, QTableWidgetItem(str(item.parent)))
 
+                # ✅ Proposed Name is now editable
                 proposed_name_item = QTableWidgetItem(dst_path.name)
-                proposed_name_item.setFlags(proposed_name_item.flags() & ~Qt.ItemIsEditable)
+                proposed_name_item.setFlags(proposed_name_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_PROPOSED_NAME, proposed_name_item)
 
+                # Proposed Destination remains editable
                 dest_item = QTableWidgetItem(str(dst_path))
                 dest_item.setFlags(dest_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_DEST, dest_item)
@@ -587,27 +592,65 @@ QTableWidget::item:hover {
         self.btn_undo.setEnabled(len(load_last_run()) > 0)
 
     def _on_cell_changed(self, row: int, col: int) -> None:
-        if self._rendering:
+        # Ignore table rebuilds and internal sync edits
+        if self._rendering or self._editing:
             return
-        if col != self.COL_DEST:
-            return
+
         if row < 0 or row >= len(self._items):
             return
 
-        text = (self.table.item(row, col).text() or "").strip()
-        if not text:
+        key = self._item_key(self._items[row])
+
+        def _set_cell(r: int, c: int, text: str) -> None:
+            """Update a cell without causing recursive cellChanged loops."""
+            self._editing = True
+            try:
+                it = self.table.item(r, c)
+                if it is not None:
+                    it.setText(text)
+            finally:
+                self._editing = False
+
+        # ---- Case 1: Proposed Destination edited directly ----
+        if col == self.COL_DEST:
+            text = (self.table.item(row, col).text() or "").strip()
+            if not text:
+                return
+
+            new_dst = Path(text).expanduser()
+            self._override_dst[key] = new_dst
+            self._dst_paths[row] = new_dst
+
+            # Keep Proposed Name synced
+            _set_cell(row, self.COL_PROPOSED_NAME, new_dst.name)
+
+            self.statusBar().showMessage(f"Manual destination set for: {self._items[row].name}", 4000)
             return
 
-        key = self._item_key(self._items[row])
-        new_dst = Path(text).expanduser()
-        self._override_dst[key] = new_dst
-        self._dst_paths[row] = new_dst
+        # ---- Case 2: Proposed Name edited (NEW) ----
+        if col == self.COL_PROPOSED_NAME:
+            text = (self.table.item(row, col).text() or "").strip()
+            if not text:
+                return
 
-        name_item = self.table.item(row, self.COL_PROPOSED_NAME)
-        if name_item is not None:
-            name_item.setText(new_dst.name)
+            # Base it off the current (possibly overridden) destination
+            current_dst = Path(self._dst_paths[row]).expanduser()
 
-        self.statusBar().showMessage(f"Manual destination set for: {self._items[row].name}", 4000)
+            # Preserve extension if user didn't provide one
+            if Path(text).suffix == "":
+                text = Path(text).with_suffix(current_dst.suffix).name
+
+            new_dst = current_dst.with_name(text)
+
+            # Save override + update internal plan
+            self._override_dst[key] = new_dst
+            self._dst_paths[row] = new_dst
+
+            # Keep Proposed Destination synced
+            _set_cell(row, self.COL_DEST, str(new_dst))
+
+            self.statusBar().showMessage(f"Manual name set for: {self._items[row].name}", 4000)
+            return
 
     def _show_context_menu(self, pos) -> None:
         index = self.table.indexAt(pos)

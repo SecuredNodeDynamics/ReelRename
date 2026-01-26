@@ -1,10 +1,10 @@
 #define MyAppName "ReelRename"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "ReelRename"
 #define MyAppExeName "reelrename.exe"
 
 [Setup]
-AppId={{D2C2B3F5-7A3A-4B2F-9B5B-REELRENAME0001}}
+AppId={{9738EC93-6E6E-4E6A-8BBF-57936C03EFF4}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=release
-OutputBaseFilename=ReelRename-Setup
+OutputBaseFilename=ReelRename-Setup-{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
