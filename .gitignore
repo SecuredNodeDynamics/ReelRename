@@ -225,3 +225,4 @@ Output/
 # Root .py files
 github_sync.py
 .env
+installer.iss
