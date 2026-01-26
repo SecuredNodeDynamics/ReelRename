@@ -1,3 +1,7 @@
+![Version](https://img.shields.io/github/v/release/artyomjanzen1/ReelRename)
+![License](https://img.shields.io/github/license/artyomjanzen1/ReelRename)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
+
 # 🎬 ReelRename
 
 **ReelRename** is a fast, cross-platform desktop application for organizing and renaming movie, anime, and TV media files using clean, consistent naming conventions.
