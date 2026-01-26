@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class ParsedMedia:
+    raw_name: str
+    title: str
+    year: Optional[int] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    is_anime: bool = False
+    release_group: Optional[str] = None
+
+
+_GROUP_RE = re.compile(r"^\[(?P<group>[^\]]{2,40})\]\s*(?P<rest>.+)$")
+_YEAR_RE = re.compile(r"(?<!\d)(?P<year>19\d{2}|20\d{2})(?!\d)")
+_SXXEYY_RE = re.compile(r"(?i)\bS(?P<s>\d{1,2})\s*E(?P<e>\d{1,3})\b")
+_XXxYY_RE = re.compile(r"(?i)\b(?P<s>\d{1,2})x(?P<e>\d{1,3})\b")
+_EP_RE = re.compile(r"(?i)\b(?:EP|E|Episode)\s*(?P<e>\d{1,3})\b")
+_DASH_EP_RE = re.compile(r"\s*-\s*(?P<e>\d{1,3})(?:\s|$)")
+
+_JUNK_TOKENS = [
+    "1080p", "720p", "2160p", "4k",
+    "web", "webrip", "web-dl", "bluray", "bdrip", "dvdrip", "hdrip",
+    "x264", "x265", "h264", "h265", "hevc", "av1",
+    "aac", "ddp", "dts", "truehd", "atmos",
+    "proper", "repack", "remux",
+]
+
+
+def _cleanup_title(s: str) -> str:
+    s = s.replace(".", " ").replace("_", " ").strip()
+
+    # Remove bracketed chunks like [1080p] (keep group handled separately)
+    s = re.sub(r"\[[^\]]+\]", " ", s)
+    s = re.sub(r"\([^)]*\)", " ", s)
+
+    # Remove common junk tokens
+    parts = []
+    for p in re.split(r"\s+", s):
+        pl = p.lower()
+        if pl in _JUNK_TOKENS:
+            continue
+        # drop short all-caps platform/source tags lightly
+        if re.fullmatch(r"[A-Z]{2,6}", p):
+            continue
+        parts.append(p)
+
+    s = " ".join(parts)
+
+    # Collapse spaces
+    s = re.sub(r"\s{2,}", " ", s).strip()
+
+    # ✅ Strip stray punctuation/brackets left behind by slicing around year
+    s = s.strip(" -._()[]{}")
+    s = re.sub(r"\s{2,}", " ", s).strip()
+
+    return s
+
+
+def parse_filename(stem: str) -> ParsedMedia:
+    """
+    Parse a filename stem (no extension) into best-effort metadata.
+    """
+    raw = stem.strip()
+    group = None
+    rest = raw
+
+    m = _GROUP_RE.match(raw)
+    if m:
+        group = m.group("group").strip()
+        rest = m.group("rest").strip()
+
+    # TV patterns: SxxEyy or 2x05
+    m = _SXXEYY_RE.search(rest) or _XXxYY_RE.search(rest)
+    if m:
+        title_part = rest[:m.start()].strip(" -._()[]{}")
+        title = _cleanup_title(title_part)
+        season = int(m.group("s"))
+        episode = int(m.group("e"))
+        is_anime = bool(group)  # heuristic: anime releases often have group tags
+        return ParsedMedia(
+            raw_name=raw, title=title, season=season, episode=episode,
+            is_anime=is_anime, release_group=group
+        )
+
+    # Anime-like " - 12 " pattern (common with group tags)
+    m = _DASH_EP_RE.search(rest)
+    if m and group:
+        title_part = rest[:m.start()].strip(" -._()[]{}")
+        title = _cleanup_title(title_part)
+        episode = int(m.group("e"))
+        return ParsedMedia(
+            raw_name=raw, title=title, episode=episode, is_anime=True, release_group=group
+        )
+
+    # "EP12" / "E12"
+    m = _EP_RE.search(rest)
+    if m:
+        title_part = rest[:m.start()].strip(" -._()[]{}")
+        title = _cleanup_title(title_part)
+        episode = int(m.group("e"))
+        is_anime = bool(group)
+        return ParsedMedia(
+            raw_name=raw, title=title, episode=episode, is_anime=is_anime, release_group=group
+        )
+
+    # Movie-like: detect year if present
+    ym = _YEAR_RE.search(rest)
+    year = int(ym.group("year")) if ym else None
+    title_part = rest[:ym.start()].strip(" -._()[]{}") if ym else rest
+    title = _cleanup_title(title_part)
+
+    return ParsedMedia(raw_name=raw, title=title, year=year, release_group=group)
