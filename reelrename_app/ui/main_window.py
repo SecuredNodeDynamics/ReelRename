@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict, Set, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -31,7 +31,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.1.1"  # bump as you like
+APP_VERSION = "1.1.2"
 
 
 class DropHint(QLabel):
@@ -52,6 +52,14 @@ class MainWindow(QMainWindow):
     COL_PROPOSED_NAME = 3
     COL_DEST = 4
 
+    # Windows filename constraints (safe cross-platform baseline)
+    _INVALID_WIN_CHARS = '<>:"/\\|?*'
+    _RESERVED_WIN_NAMES = {
+        "CON", "PRN", "AUX", "NUL",
+        *{f"COM{i}" for i in range(1, 10)},
+        *{f"LPT{i}" for i in range(1, 10)},
+    }
+
     def __init__(self, app) -> None:
         super().__init__()
         self.app = app
@@ -68,8 +76,16 @@ class MainWindow(QMainWindow):
         self._locked: Set[str] = set()
         self._rendering = False
 
-        # NEW: edit guard to avoid recursive cellChanged events
+        # edit guard to avoid recursive cellChanged events
         self._editing = False
+
+        # Preflight status
+        self._row_issues: Dict[int, List[str]] = {}
+        self._row_has_error: Set[int] = set()
+
+        # Remember last render mode/root for helpers
+        self._last_effective_move = False
+        self._last_root: Optional[Path] = None
 
         # Year lookup helpers
         self.year_cache = YearCache()
@@ -162,7 +178,13 @@ class MainWindow(QMainWindow):
             "Proposed Destination",
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+
+        # Allow click-to-edit + double-click (plays nicer with SelectRows)
+        self.table.setEditTriggers(
+            QAbstractItemView.DoubleClicked
+            | QAbstractItemView.SelectedClicked
+            | QAbstractItemView.EditKeyPressed
+        )
 
         self.table.horizontalHeader().setSectionResizeMode(self.COL_TYPE, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(self.COL_NAME, QHeaderView.ResizeToContents)
@@ -241,6 +263,7 @@ QTableWidget::item:hover {
             "<b>Key features</b><br>"
             "• Rename-in-place or Move to Library Root<br>"
             "• Proposed Name + Proposed Destination preview<br>"
+            "• Manual edits + preflight conflict detection<br>"
             "• Undo last rename run<br>"
             "• TMDb year lookup for movies (optional)<br><br>"
             f"<b>TMDb key location</b><br>{env_path}"
@@ -270,16 +293,17 @@ QTableWidget::item:hover {
           <li><b>Rename + Move (Library Root)</b>: moves files into organized folders under your chosen Library Root.</li>
         </ul>
 
-        <h3>4) Manual edits &amp; locking</h3>
+        <h3>4) Manual edits, validation &amp; preflight</h3>
         <ul>
-          <li>You can edit <b>Proposed Name</b> or <b>Proposed Destination</b> directly (double click).</li>
-          <li>Right-click a row for options:
+          <li>You can edit <b>Proposed Name</b> or <b>Proposed Destination</b> directly.</li>
+          <li>ReelRename validates filenames (Windows-safe) and runs a preflight check for duplicates and conflicts.</li>
+          <li>Rows will show:
             <ul>
-              <li><b>Lock Row</b>: freezes the destination for that row.</li>
-              <li><b>Reset to Auto</b>: returns to the auto-generated destination.</li>
-              <li><b>Copy Proposed Name</b> / <b>Copy Destination</b></li>
+              <li><b>❌</b> = must fix before renaming</li>
+              <li><b>⚠️</b> = warning (you may still rename)</li>
             </ul>
           </li>
+          <li>Right-click a row for options (Lock, Reset, Copy).</li>
         </ul>
 
         <h3>5) TMDb movie year lookup</h3>
@@ -448,6 +472,136 @@ QTableWidget::item:hover {
         event.acceptProposedAction()
 
     # ---------------------------
+    # Validation & preflight
+    # ---------------------------
+    def _sanitize_filename(self, name: str, keep_ext: str | None = None) -> Tuple[str, List[str]]:
+        """
+        Returns (sanitized_name, notes). Notes contains changes/warnings.
+        keep_ext: if provided and name has no suffix, ensure this extension.
+        """
+        notes: List[str] = []
+        raw = (name or "")
+
+        # Strip surrounding whitespace early
+        cleaned = raw.strip()
+        if cleaned != raw:
+            notes.append("Trimmed leading/trailing whitespace.")
+
+        if not cleaned:
+            return "", ["Name cannot be empty."]
+
+        # Replace invalid characters
+        replaced = "".join("_" if ch in self._INVALID_WIN_CHARS else ch for ch in cleaned)
+        if replaced != cleaned:
+            notes.append(f"Replaced invalid characters: {self._INVALID_WIN_CHARS}")
+        cleaned = replaced
+
+        # Windows: trailing dot/space invalid
+        trimmed = cleaned.rstrip(" .")
+        if trimmed != cleaned:
+            notes.append("Trimmed trailing dot/space (Windows compatibility).")
+        cleaned = trimmed
+
+        if not cleaned:
+            return "", ["Name became empty after cleanup."]
+
+        # Reserved names on Windows (CON, NUL, COM1, etc.)
+        stem = Path(cleaned).stem
+        if stem.upper() in self._RESERVED_WIN_NAMES:
+            cleaned = f"_{cleaned}"
+            notes.append("Prefixed reserved Windows filename.")
+
+        # Add missing extension if requested
+        if keep_ext and Path(cleaned).suffix == "":
+            cleaned = Path(cleaned).with_suffix(keep_ext).name
+            notes.append(f"Added missing extension: {keep_ext}")
+
+        return cleaned, notes
+
+    def _validate_destination_path(self, p: Path) -> List[str]:
+        issues: List[str] = []
+
+        fname = p.name
+        sanitized, _notes = self._sanitize_filename(fname)
+        if not sanitized:
+            issues.append("Destination filename is empty/invalid.")
+        elif sanitized != fname:
+            issues.append("Destination filename contains invalid characters.")
+
+        return issues
+
+    def _apply_preflight_to_table(self) -> None:
+        # Avoid recursive signals
+        self._editing = True
+        try:
+            for row in range(self.table.rowCount()):
+                type_item = self.table.item(row, self.COL_TYPE)
+                if type_item is None:
+                    continue
+
+                base_text = type_item.text()
+                # Remove any prior indicators
+                base_text = base_text.replace(" ❌", "").replace(" ⚠️", "")
+
+                issues = self._row_issues.get(row, [])
+                if row in self._row_has_error:
+                    type_item.setText(f"{base_text} ❌")
+                    type_item.setToolTip("\n".join(issues))
+                elif issues:
+                    type_item.setText(f"{base_text} ⚠️")
+                    type_item.setToolTip("\n".join(issues))
+                else:
+                    type_item.setText(base_text)
+                    type_item.setToolTip("")
+        finally:
+            self._editing = False
+
+    def _run_preflight(self) -> None:
+        self._row_issues.clear()
+        self._row_has_error.clear()
+
+        if not self._dst_paths:
+            self._apply_preflight_to_table()
+            return
+
+        # Duplicate destinations in-batch
+        dst_to_rows: Dict[str, List[int]] = {}
+        for i, dst in enumerate(self._dst_paths):
+            dst_to_rows.setdefault(str(dst), []).append(i)
+
+        for row, dst in enumerate(self._dst_paths):
+            issues: List[str] = []
+
+            # Validate name/path
+            issues.extend(self._validate_destination_path(dst))
+
+            # Duplicate within batch
+            if len(dst_to_rows.get(str(dst), [])) > 1:
+                issues.append("Duplicate destination within this batch.")
+
+            # Exists on disk (warning, not always an error)
+            try:
+                if dst.exists():
+                    issues.append("Destination already exists on disk.")
+            except Exception:
+                issues.append("Could not check destination existence (permission/path issue).")
+
+            if issues:
+                self._row_issues[row] = issues
+
+                # Classify hard errors
+                hard = False
+                if any("invalid" in x.lower() or "empty" in x.lower() for x in issues):
+                    hard = True
+                if any("Duplicate destination" in x for x in issues):
+                    hard = True
+
+                if hard:
+                    self._row_has_error.add(row)
+
+        self._apply_preflight_to_table()
+
+    # ---------------------------
     # Data handling
     # ---------------------------
     def _add_paths(self, paths: List[str]) -> None:
@@ -493,6 +647,29 @@ QTableWidget::item:hover {
     def _item_key(self, item: MediaItem) -> str:
         return str(item.path)
 
+    def _move_enabled(self) -> bool:
+        return self.mode_combo.currentIndex() == 1
+
+    def _compute_auto_destination_for_item(self, item: MediaItem) -> Path:
+        """Recompute the auto destination for an item under current mode/root settings."""
+        stem = item.path.stem
+        parsed = parse_filename(stem)
+        mtype = classify(parsed)
+
+        if mtype == MediaType.MOVIE and parsed.year is None and parsed.title:
+            year = self._try_fill_movie_year(parsed.title)
+            if year:
+                parsed = replace(parsed, year=year)
+
+        auto_dst = build_destination(
+            src=item.path,
+            parsed=parsed,
+            media_type=mtype,
+            library_root=self._last_root if self._last_effective_move else None,
+            move_enabled=self._last_effective_move,
+        )
+        return Path(auto_dst)
+
     def _render_table(self) -> None:
         self._rendering = True
         try:
@@ -500,6 +677,8 @@ QTableWidget::item:hover {
             self._dst_paths = []
 
             if not self._items:
+                self._row_issues.clear()
+                self._row_has_error.clear()
                 self._update_status()
                 self._refresh_buttons()
                 return
@@ -507,6 +686,9 @@ QTableWidget::item:hover {
             move_mode = self._move_enabled()
             root = self._library_root() if move_mode else None
             effective_move = move_mode and root is not None and root.exists()
+
+            self._last_root = root
+            self._last_effective_move = effective_move
 
             if move_mode and (root is None or not root.exists()):
                 self.statusBar().showMessage(
@@ -519,34 +701,23 @@ QTableWidget::item:hover {
 
                 key = self._item_key(item)
 
-                stem = item.path.stem
-                parsed = parse_filename(stem)
-                mtype = classify(parsed)
-
-                if mtype == MediaType.MOVIE and parsed.year is None and parsed.title:
-                    year = self._try_fill_movie_year(parsed.title)
-                    if year:
-                        parsed = replace(parsed, year=year)
-
-                auto_dst = build_destination(
-                    src=item.path,
-                    parsed=parsed,
-                    media_type=mtype,
-                    library_root=root if effective_move else None,
-                    move_enabled=effective_move,
-                )
+                auto_dst = self._compute_auto_destination_for_item(item)
 
                 if key in self._override_dst:
-                    dst = self._override_dst[key]
+                    dst_path = Path(self._override_dst[key])
                 else:
-                    dst = auto_dst
+                    dst_path = auto_dst
 
                 if key in self._locked and key not in self._override_dst:
                     self._override_dst[key] = auto_dst
-                    dst = auto_dst
+                    dst_path = auto_dst
 
-                dst_path = Path(dst)
                 self._dst_paths.append(dst_path)
+
+                # Type column
+                stem = item.path.stem
+                parsed = parse_filename(stem)
+                mtype = classify(parsed)
 
                 type_text = str(mtype.value)
                 if key in self._locked:
@@ -556,16 +727,17 @@ QTableWidget::item:hover {
                 self.table.setItem(r, self.COL_NAME, QTableWidgetItem(item.name))
                 self.table.setItem(r, self.COL_FOLDER, QTableWidgetItem(str(item.parent)))
 
-                # ✅ Proposed Name is now editable
+                # Proposed Name (editable)
                 proposed_name_item = QTableWidgetItem(dst_path.name)
                 proposed_name_item.setFlags(proposed_name_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_PROPOSED_NAME, proposed_name_item)
 
-                # Proposed Destination remains editable
+                # Proposed Destination (editable)
                 dest_item = QTableWidgetItem(str(dst_path))
                 dest_item.setFlags(dest_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_DEST, dest_item)
 
+            self._run_preflight()
             self._update_status()
             self._refresh_buttons()
         finally:
@@ -576,20 +748,37 @@ QTableWidget::item:hover {
         self._dst_paths.clear()
         self._override_dst.clear()
         self._locked.clear()
+        self._row_issues.clear()
+        self._row_has_error.clear()
         self.table.setRowCount(0)
         self._update_status()
         self._refresh_buttons()
 
     def _update_status(self) -> None:
-        self.statusBar().showMessage(f"Items loaded: {len(self._items)}")
+        msg = f"Items loaded: {len(self._items)}"
+        if self._row_has_error:
+            msg += f" — Fix ❌ rows: {len(self._row_has_error)}"
+        self.statusBar().showMessage(msg)
 
     def _refresh_buttons(self) -> None:
         can_rename = len(self._items) > 0
+
         if self._move_enabled():
             root = self._library_root()
             can_rename = can_rename and root is not None and root.exists()
+
+        # Safety gate: block rename if any hard preflight errors
+        if self._row_has_error:
+            can_rename = False
+
         self.btn_rename.setEnabled(can_rename)
         self.btn_undo.setEnabled(len(load_last_run()) > 0)
+
+    def _library_root(self) -> Optional[Path]:
+        text = self.root_edit.text().strip()
+        if not text:
+            return None
+        return Path(text).expanduser()
 
     def _on_cell_changed(self, row: int, col: int) -> None:
         # Ignore table rebuilds and internal sync edits
@@ -618,38 +807,70 @@ QTableWidget::item:hover {
                 return
 
             new_dst = Path(text).expanduser()
+
+            # sanitize filename portion
+            fname = new_dst.name
+            sanitized, notes = self._sanitize_filename(fname)
+            if not sanitized:
+                self.statusBar().showMessage("Invalid destination filename. Fix the name.", 6000)
+                self._dst_paths[row] = new_dst
+                self._override_dst[key] = new_dst
+                self._run_preflight()
+                self._update_status()
+                self._refresh_buttons()
+                return
+
+            if sanitized != fname:
+                new_dst = new_dst.with_name(sanitized)
+                _set_cell(row, self.COL_DEST, str(new_dst))
+                if notes:
+                    self.statusBar().showMessage("Destination adjusted: " + " ".join(notes), 6500)
+
             self._override_dst[key] = new_dst
             self._dst_paths[row] = new_dst
 
             # Keep Proposed Name synced
             _set_cell(row, self.COL_PROPOSED_NAME, new_dst.name)
 
-            self.statusBar().showMessage(f"Manual destination set for: {self._items[row].name}", 4000)
+            self._run_preflight()
+            self._update_status()
+            self._refresh_buttons()
             return
 
-        # ---- Case 2: Proposed Name edited (NEW) ----
+        # ---- Case 2: Proposed Name edited ----
         if col == self.COL_PROPOSED_NAME:
-            text = (self.table.item(row, col).text() or "").strip()
-            if not text:
+            text = (self.table.item(row, col).text() or "")
+            if not text.strip():
+                self.statusBar().showMessage("Name cannot be empty.", 5000)
                 return
 
-            # Base it off the current (possibly overridden) destination
             current_dst = Path(self._dst_paths[row]).expanduser()
+            keep_ext = current_dst.suffix if current_dst.suffix else None
 
-            # Preserve extension if user didn't provide one
-            if Path(text).suffix == "":
-                text = Path(text).with_suffix(current_dst.suffix).name
+            sanitized, notes = self._sanitize_filename(text, keep_ext=keep_ext)
+            if not sanitized:
+                self.statusBar().showMessage("Invalid name. Fix the filename.", 6000)
+                self._run_preflight()
+                self._update_status()
+                self._refresh_buttons()
+                return
 
-            new_dst = current_dst.with_name(text)
+            if sanitized != text.strip():
+                _set_cell(row, self.COL_PROPOSED_NAME, sanitized)
+                if notes:
+                    self.statusBar().showMessage("Name adjusted: " + " ".join(notes), 6500)
 
-            # Save override + update internal plan
+            new_dst = current_dst.with_name(sanitized)
+
             self._override_dst[key] = new_dst
             self._dst_paths[row] = new_dst
 
             # Keep Proposed Destination synced
             _set_cell(row, self.COL_DEST, str(new_dst))
 
-            self.statusBar().showMessage(f"Manual name set for: {self._items[row].name}", 4000)
+            self._run_preflight()
+            self._update_status()
+            self._refresh_buttons()
             return
 
     def _show_context_menu(self, pos) -> None:
@@ -665,12 +886,19 @@ QTableWidget::item:hover {
 
         menu = QMenu(self)
         act_lock = QAction("Lock Row" if key not in self._locked else "Unlock Row", self)
-        act_reset = QAction("Reset to Auto", self)
+
+        act_reset_name = QAction("Reset Name Only", self)
+        act_reset_dest = QAction("Reset Destination Only", self)
+        act_reset_all = QAction("Reset to Auto", self)
+
         act_copy_dest = QAction("Copy Destination", self)
         act_copy_name = QAction("Copy Proposed Name", self)
 
         menu.addAction(act_lock)
-        menu.addAction(act_reset)
+        menu.addSeparator()
+        menu.addAction(act_reset_name)
+        menu.addAction(act_reset_dest)
+        menu.addAction(act_reset_all)
         menu.addSeparator()
         menu.addAction(act_copy_name)
         menu.addAction(act_copy_dest)
@@ -689,11 +917,47 @@ QTableWidget::item:hover {
             self._render_table()
             return
 
-        if chosen == act_reset:
-            self._override_dst.pop(key, None)
-            self.statusBar().showMessage(f"Reset to auto: {item.name}", 3000)
-            self._render_table()
-            return
+        if chosen in (act_reset_name, act_reset_dest, act_reset_all):
+            auto_dst = self._compute_auto_destination_for_item(item)
+            current_dst = Path(self._dst_paths[row])
+
+            if chosen == act_reset_all:
+                self._override_dst.pop(key, None)
+                self.statusBar().showMessage(f"Reset to auto: {item.name}", 3000)
+                self._render_table()
+                return
+
+            if chosen == act_reset_dest:
+                self._override_dst[key] = auto_dst
+                self._dst_paths[row] = auto_dst
+                self._editing = True
+                try:
+                    self.table.item(row, self.COL_PROPOSED_NAME).setText(auto_dst.name)
+                    self.table.item(row, self.COL_DEST).setText(str(auto_dst))
+                finally:
+                    self._editing = False
+                self.statusBar().showMessage(f"Reset destination: {item.name}", 3000)
+                self._run_preflight()
+                self._update_status()
+                self._refresh_buttons()
+                return
+
+            if chosen == act_reset_name:
+                # Keep current folder, restore auto filename
+                new_dst = current_dst.with_name(auto_dst.name)
+                self._override_dst[key] = new_dst
+                self._dst_paths[row] = new_dst
+                self._editing = True
+                try:
+                    self.table.item(row, self.COL_PROPOSED_NAME).setText(new_dst.name)
+                    self.table.item(row, self.COL_DEST).setText(str(new_dst))
+                finally:
+                    self._editing = False
+                self.statusBar().showMessage(f"Reset name: {item.name}", 3000)
+                self._run_preflight()
+                self._update_status()
+                self._refresh_buttons()
+                return
 
         if chosen == act_copy_dest:
             dest_text = self.table.item(row, self.COL_DEST).text()
@@ -711,6 +975,14 @@ QTableWidget::item:hover {
 
     def _rename_now(self) -> None:
         if not self._items:
+            return
+
+        if self._row_has_error:
+            QMessageBox.warning(
+                self,
+                "Fix Errors First",
+                "One or more rows are marked ❌.\n\nFix those rows before renaming."
+            )
             return
 
         if self._move_enabled():
@@ -757,6 +1029,7 @@ QTableWidget::item:hover {
             new_key = str(new_item.path)
 
             if old_key in self._override_dst:
+                # preserve overrides where possible
                 new_override[new_key] = self._override_dst[old_key]
             if old_key in self._locked:
                 new_locked.add(new_key)
