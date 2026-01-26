@@ -1,46 +1,30 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 github_sync.py
-Auto-sync a local git repo (e.g., ReelRename) to GitHub.
+Auto-sync a local git repo (ReelRename) to GitHub.
 
 Typical use:
   python github_sync.py
-  python github_sync.py --path "C:\Projects\ReelRename" --message "Quick fixes"
+  python github_sync.py --path "C:/Users/artyo/PycharmProjects/ReelRename" --message "Quick fixes"
   python github_sync.py --no-pull
-  python github_sync.py --remote origin --branch main
-
-Notes:
-- Requires Git installed and available on PATH.
-- Assumes the repo already has a remote (default: origin).
+  python github_sync.py --no-stash
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+SCRIPT_NAME = "github_sync.py"
+
 
 def run_git(args: List[str], cwd: Path) -> Tuple[int, str, str]:
-    """Run a git command and return (returncode, stdout, stderr)."""
-    cmd = ["git"] + args
-    p = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        text=True,
-        capture_output=True,
-        shell=False,
-    )
+    p = subprocess.run(["git"] + args, cwd=str(cwd), text=True, capture_output=True)
     return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
-
-
-def fail(msg: str, code: int = 1) -> None:
-    print(f"[ERROR] {msg}", file=sys.stderr)
-    sys.exit(code)
 
 
 def info(msg: str) -> None:
@@ -51,188 +35,174 @@ def ok(msg: str) -> None:
     print(f"[OK]   {msg}")
 
 
+def fail(msg: str, code: int = 1) -> None:
+    print(f"[ERROR] {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
 def is_git_repo(cwd: Path) -> bool:
-    rc, out, _ = run_git(["rev-parse", "--is-inside-work-tree"], cwd=cwd)
+    rc, out, _ = run_git(["rev-parse", "--is-inside-work-tree"], cwd)
     return rc == 0 and out.lower() == "true"
 
 
 def current_branch(cwd: Path) -> Optional[str]:
-    rc, out, _ = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
-    if rc != 0:
-        return None
-    return out
+    rc, out, _ = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    return out if rc == 0 else None
 
 
 def has_remote(cwd: Path, remote: str) -> bool:
-    rc, out, _ = run_git(["remote"], cwd=cwd)
+    rc, out, _ = run_git(["remote"], cwd)
+    return rc == 0 and remote in {r.strip() for r in out.splitlines() if r.strip()}
+
+
+def status_porcelain(cwd: Path) -> str:
+    rc, out, err = run_git(["status", "--porcelain"], cwd)
     if rc != 0:
+        fail(f"Failed to read status. Git said: {err}")
+    return out.strip()
+
+
+def ensure_script_ignored(repo_path: Path) -> None:
+    gitignore = repo_path / ".gitignore"
+    lines: List[str] = []
+    if gitignore.exists():
+        lines = gitignore.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+    if SCRIPT_NAME not in lines:
+        info(f"Adding {SCRIPT_NAME} to .gitignore...")
+        with gitignore.open("a", encoding="utf-8") as f:
+            if lines and lines[-1].strip():
+                f.write("\n")
+            f.write(f"{SCRIPT_NAME}\n")
+        ok(f"Added {SCRIPT_NAME} to .gitignore.")
+    else:
+        ok(f"{SCRIPT_NAME} already in .gitignore.")
+
+    # If tracked, untrack it (keep local file)
+    rc, _, _ = run_git(["ls-files", "--error-unmatch", SCRIPT_NAME], repo_path)
+    if rc == 0:
+        info(f"{SCRIPT_NAME} is tracked. Untracking it (keeping local file)...")
+        rc2, out2, err2 = run_git(["rm", "--cached", "--quiet", SCRIPT_NAME], repo_path)
+        if rc2 != 0:
+            fail(f"Failed to untrack {SCRIPT_NAME}. Git said: {err2 or out2}")
+        ok(f"Untracked {SCRIPT_NAME}.")
+    else:
+        ok(f"{SCRIPT_NAME} is not tracked (good).")
+
+
+def stash_push_if_needed(repo_path: Path) -> bool:
+    if not status_porcelain(repo_path):
         return False
-    remotes = {r.strip() for r in out.splitlines() if r.strip()}
-    return remote in remotes
-
-
-def working_tree_dirty(cwd: Path) -> bool:
-    rc, out, _ = run_git(["status", "--porcelain"], cwd=cwd)
+    msg = f"github_sync auto-stash {datetime.now():%Y-%m-%d %H:%M:%S}"
+    info("Local changes detected. Stashing them so pull/rebase can run...")
+    rc, out, err = run_git(["stash", "push", "-u", "-m", msg], repo_path)
     if rc != 0:
-        return False
-    return len(out.strip()) > 0
+        fail(f"Failed to stash changes. Git said: {err or out}")
+    ok("Stashed.")
+    return True
 
 
-def ensure_upstream(cwd: Path, remote: str, branch: str) -> None:
-    """
-    Ensure branch has an upstream.
-    If not, set it to remote/branch.
-    """
-    rc, _, _ = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=cwd)
+def stash_pop(repo_path: Path) -> None:
+    info("Restoring stashed changes (stash pop)...")
+    rc, out, err = run_git(["stash", "pop"], repo_path)
+    if rc != 0:
+        fail(f"Stash pop failed (conflicts). Git said:\n{err or out}")
+    ok("Stash restored.")
+
+
+def ensure_upstream(repo_path: Path, remote: str, branch: str) -> None:
+    rc, _, _ = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], repo_path)
     if rc == 0:
         return
-
-    info(f"No upstream set for '{branch}'. Setting upstream to '{remote}/{branch}'...")
-    rc, _, err = run_git(["push", "-u", remote, branch], cwd=cwd)
+    info(f"Setting upstream to {remote}/{branch}...")
+    rc, out, err = run_git(["push", "-u", remote, branch], repo_path)
     if rc != 0:
-        fail(
-            "Failed to set upstream. This usually means:\n"
-            "- remote/branch doesn't exist yet, OR\n"
-            "- authentication failed, OR\n"
-            "- remote name is wrong.\n\n"
-            f"Git said: {err}"
-        )
+        fail(f"Failed to set upstream. Git said:\n{err or out}")
     ok("Upstream set.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Auto-sync a repo to GitHub via git add/commit/push.")
-    parser.add_argument(
-        "--path",
-        default=".",
-        help="Path to the repo root (default: current directory).",
-    )
-    parser.add_argument(
-        "--remote",
-        default="origin",
-        help="Remote name to push to (default: origin).",
-    )
-    parser.add_argument(
-        "--branch",
-        default=None,
-        help="Branch to push (default: current branch).",
-    )
-    parser.add_argument(
-        "--message",
-        default=None,
-        help="Commit message (default: timestamped 'Auto-sync').",
-    )
-    parser.add_argument(
-        "--no-pull",
-        action="store_true",
-        help="Skip pulling/rebasing before pushing.",
-    )
-    parser.add_argument(
-        "--no-commit",
-        action="store_true",
-        help="Stage changes and push without committing (not typical).",
-    )
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description="Auto-sync repo to GitHub (stash/pull/add/commit/push).")
+    ap.add_argument("--path", default=".", help="Repo path (default: current directory).")
+    ap.add_argument("--remote", default="origin", help="Remote (default: origin).")
+    ap.add_argument("--branch", default=None, help="Branch (default: current).")
+    ap.add_argument("--message", default=None, help="Commit message.")
+    ap.add_argument("--no-pull", action="store_true", help="Skip pull/rebase.")
+    ap.add_argument("--no-commit", action="store_true", help="Skip commit.")
+    ap.add_argument("--no-stash", action="store_true", help="Disable auto-stash.")
+    args = ap.parse_args()
 
-    repo_path = Path(args.path).expanduser().resolve()
-    if not repo_path.exists():
-        fail(f"Path does not exist: {repo_path}")
+    repo = Path(args.path).expanduser().resolve()
+    if not repo.exists():
+        fail(f"Path does not exist: {repo}")
+    if not is_git_repo(repo):
+        fail(f"Not a git repository: {repo}")
 
-    if not is_git_repo(repo_path):
-        fail(
-            f"Not a git repository: {repo_path}\n"
-            "Fix: run `git init` and add a remote, or point --path at the repo root."
-        )
-    ok(f"Git repo detected: {repo_path}")
+    ok(f"Git repo detected: {repo}")
 
-    # Determine branch
-    branch = args.branch or current_branch(repo_path)
+    ensure_script_ignored(repo)
+
+    branch = args.branch or current_branch(repo)
     if not branch or branch == "HEAD":
-        fail("Could not determine current branch. Are you in a detached HEAD state?")
+        fail("Could not determine current branch.")
     info(f"Branch: {branch}")
 
-    # Remote sanity check
-    remote = args.remote
-    if not has_remote(repo_path, remote):
-        rc, _, err = run_git(["remote", "-v"], cwd=repo_path)
-        details = err if err else "(no remotes listed)"
-        fail(
-            f"Remote '{remote}' not found.\n"
-            "Fix: set your GitHub remote, e.g.:\n"
-            "  git remote add origin <YOUR_GITHUB_REPO_URL>\n\n"
-            f"Current remotes:\n{details}"
-        )
-    ok(f"Remote: {remote}")
+    if not has_remote(repo, args.remote):
+        rc, out, err = run_git(["remote", "-v"], repo)
+        fail(f"Remote '{args.remote}' not found.\n{out or err}")
+    ok(f"Remote: {args.remote}")
 
-    # Pull/rebase first (best practice)
+    did_stash = False
+    if not args.no_stash:
+        did_stash = stash_push_if_needed(repo)
+    else:
+        info("Auto-stash disabled (--no-stash).")
+
     if not args.no_pull:
         info("Pulling latest changes (rebase)...")
-        rc, out, err = run_git(["pull", "--rebase", remote, branch], cwd=repo_path)
+        rc, out, err = run_git(["pull", "--rebase", args.remote, branch], repo)
         if rc != 0:
-            fail(
-                "Pull/rebase failed. You likely have conflicts or auth issues.\n"
-                "Resolve conflicts, then re-run.\n\n"
-                f"Git said: {err or out}"
-            )
+            fail(f"Pull/rebase failed. Git said:\n{err or out}")
         ok("Pull/rebase complete.")
     else:
         info("Skipping pull/rebase (--no-pull).")
 
-    # Stage everything
+    if did_stash:
+        stash_pop(repo)
+
     info("Staging changes (git add -A)...")
-    rc, _, err = run_git(["add", "-A"], cwd=repo_path)
+    rc, _, err = run_git(["add", "-A"], repo)
     if rc != 0:
         fail(f"Failed to stage changes. Git said: {err}")
     ok("Staged.")
 
-    # Commit if needed
-    if args.no_commit:
-        info("Skipping commit (--no-commit).")
-    else:
-        if working_tree_dirty(repo_path):
-            # still dirty after add? (usually means untracked ignored etc., but status will show)
-            pass
-
-        rc, status_out, status_err = run_git(["status", "--porcelain"], cwd=repo_path)
-        if rc != 0:
-            fail(f"Failed to read status. Git said: {status_err}")
-
-        if not status_out.strip():
-            ok("No changes to commit. Repo already up to date locally.")
-        else:
-            commit_msg = args.message or f"Auto-sync: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            info(f"Committing: {commit_msg}")
-            rc, out, err = run_git(["commit", "-m", commit_msg], cwd=repo_path)
+    if not args.no_commit:
+        if status_porcelain(repo):
+            msg = args.message or f"Auto-sync: {datetime.now():%Y-%m-%d %H:%M:%S}"
+            info(f"Committing: {msg}")
+            rc, out, err = run_git(["commit", "-m", msg], repo)
             if rc != 0:
-                # Common case: "nothing to commit" can happen depending on state.
                 combined = (err or "") + ("\n" + out if out else "")
-                if "nothing to commit" in combined.lower():
-                    ok("Nothing to commit.")
-                else:
+                if "nothing to commit" not in combined.lower():
                     fail(f"Commit failed. Git said:\n{combined.strip()}")
-            else:
-                ok("Commit created.")
+            ok("Commit created.")
+        else:
+            ok("No changes to commit.")
+    else:
+        info("Skipping commit (--no-commit).")
 
-    # Ensure upstream & push
-    ensure_upstream(repo_path, remote, branch)
+    ensure_upstream(repo, args.remote, branch)
 
     info("Pushing to GitHub...")
-    rc, out, err = run_git(["push", remote, branch], cwd=repo_path)
+    rc, out, err = run_git(["push", args.remote, branch], repo)
     if rc != 0:
-        fail(
-            "Push failed. This is usually authentication, permissions, or a non-fast-forward issue.\n\n"
-            f"Git said: {err or out}"
-        )
+        fail(f"Push failed. Git said:\n{err or out}")
     ok("Push complete. GitHub is updated.")
 
-    # Friendly summary
-    rc, log_out, _ = run_git(["log", "-1", "--oneline"], cwd=repo_path)
+    rc, log_out, _ = run_git(["log", "-1", "--oneline"], repo)
     if rc == 0 and log_out:
         info(f"Latest commit: {log_out}")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        fail("Cancelled.", code=130)
+    main()
