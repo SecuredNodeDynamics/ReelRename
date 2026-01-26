@@ -1,5 +1,5 @@
 #define MyAppName "ReelRename"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "ReelRename"
 #define MyAppExeName "reelrename.exe"
 
