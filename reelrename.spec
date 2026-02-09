@@ -5,7 +5,7 @@ a = Analysis(
     ['reelrename_app\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('reelrename_app/assets/icon.ico', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='reelrename_app/assets/icon.ico',
 )

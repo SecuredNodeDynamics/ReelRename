@@ -10,6 +10,7 @@ Typical use:
   python github_sync.py --no-stash
 """
 
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
+import re
 
 SCRIPT_NAME = "github_sync.py"
 
@@ -121,8 +123,32 @@ def ensure_upstream(repo_path: Path, remote: str, branch: str) -> None:
     ok("Upstream set.")
 
 
+def update_version(version: str, repo: Path) -> None:
+    """Update version number in main_window.py and README.md automatically."""
+    mw_path = repo / "reelrename_app" / "ui" / "main_window.py"
+    if mw_path.exists():
+        text = mw_path.read_text(encoding="utf-8")
+        new_text = re.sub(r'APP_VERSION\s*=\s*"[^"]+"', f'APP_VERSION = "{version}"', text)
+        mw_path.write_text(new_text, encoding="utf-8")
+        print(f"[OK] Updated version in {mw_path}")
+    else:
+        print(f"[WARN] main_window.py not found for version update.")
+
+    # Update README.md version references
+    readme_path = repo / "README.md"
+    if readme_path.exists():
+        readme = readme_path.read_text(encoding="utf-8")
+        # Update badges and installer references
+        readme = re.sub(r'(v[\d.]+)', f'v{version}', readme)
+        readme = re.sub(r'(ReelRename-Setup\.exe\s*\(v[\d.]+\))', f'ReelRename-Setup.exe (v{version})', readme)
+        readme = re.sub(r'(ReelRename-x86_64\.AppImage\s*\(v[\d.]+\))', f'ReelRename-x86_64.AppImage (v{version})', readme)
+        readme_path.write_text(readme, encoding="utf-8")
+        print(f"[OK] Updated version references in README.md")
+    else:
+        print(f"[WARN] README.md not found for version update.")
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Auto-sync repo to GitHub (stash/pull/add/commit/push).")
+    ap = argparse.ArgumentParser(description="Auto-sync repo to GitHub (stash/pull/add/commit/push, version update, release automation).")
     ap.add_argument("--path", default=".", help="Repo path (default: current directory).")
     ap.add_argument("--remote", default="origin", help="Remote (default: origin).")
     ap.add_argument("--branch", default="main", help="Branch (default: main).")
@@ -133,12 +159,38 @@ def main() -> None:
     args = ap.parse_args()
 
     repo = Path(args.path).expanduser().resolve()
+
+    # Auto-extract and bump version
+    import re
+    mw_path = repo / "reelrename_app" / "ui" / "main_window.py"
+    version = None
+    if mw_path.exists():
+        text = mw_path.read_text(encoding="utf-8")
+        m = re.search(r'APP_VERSION\s*=\s*"([\d.]+)"', text)
+        if m:
+            parts = m.group(1).split('.')
+            if len(parts) == 3:
+                parts[2] = str(int(parts[2]) + 1)
+            elif len(parts) == 2:
+                parts.append('1')
+            else:
+                parts = ['1', '0', '1']
+            version = '.'.join(parts)
+    if not isinstance(version, str) or not version:
+        fail("Could not extract version from main_window.py")
+
+    # Update version everywhere
+    if version is None:
+        fail("Could not extract version from main_window.py")
+    update_version(str(version), repo)
     if not repo.exists():
         fail(f"Path does not exist: {repo}")
     if not is_git_repo(repo):
         fail(f"Not a git repository: {repo}")
 
     ok(f"Git repo detected: {repo}")
+
+    # No manual version update; version is auto-extracted and updated above
 
     ensure_script_ignored(repo)
 
@@ -202,6 +254,23 @@ def main() -> None:
     rc, log_out, _ = run_git(["log", "-1", "--oneline"], repo)
     if rc == 0 and log_out:
         info(f"Latest commit: {log_out}")
+
+    # Create git tag for version
+    rc, _, _ = run_git(["tag", f"v{version}"], repo)
+    if rc == 0:
+        print(f"[OK] Created git tag v{version}")
+    else:
+        print(f"[WARN] Failed to create git tag v{version}")
+
+    # Create/update GitHub release
+    exe_path = repo / "release" / f"ReelRename-Setup-{version}.exe"
+    if exe_path.exists():
+        notes = f"Highlights:\n- Bulk rename support: Easily rename large batches of media files in one go.\n- Media type improvements: Now detects and organizes Anime and Anime-Movies alongside Movies and TV.\n\nOther changes:\n- Enhanced preview-first workflow for bulk operations.\n- Improved metadata resolution and classification."
+        cmd = ["gh", "release", "create", f"v{version}", str(exe_path), "--title", f"ReelRename v{version}", "--notes", notes, "--draft"]
+        print(f"[INFO] Running: {' '.join(cmd)}")
+        subprocess.run(cmd)
+    else:
+        print(f"[WARN] Installer not found: {exe_path}")
 
 
 if __name__ == "__main__":

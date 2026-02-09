@@ -97,3 +97,4 @@ Desktop.ini
 # Project-specific
 github_sync.py
 installer.iss
+build_app.py

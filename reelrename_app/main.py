@@ -43,15 +43,16 @@ def main() -> int:
     app.setPalette(dark_palette())
 
     # App icon (works dev + PyInstaller)
-    icon_path = resource_path("assets", "icon.png")
-    if icon_path.exists():
-        icon = QIcon(str(icon_path))
+    icon_ico = resource_path("assets", "icon.ico")
+    icon = None
+    if icon_ico.exists():
+        icon = QIcon(str(icon_ico))
         if not icon.isNull():
             app.setWindowIcon(icon)
 
     win = MainWindow()
-    if icon_path.exists():
-        win.setWindowIcon(QIcon(str(icon_path)))
+    if icon and not icon.isNull():
+        win.setWindowIcon(icon)
 
     win.show()
     return app.exec()
