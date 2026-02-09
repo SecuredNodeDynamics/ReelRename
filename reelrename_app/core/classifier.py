@@ -8,12 +8,20 @@ class MediaType(str, Enum):
     MOVIE = "Movie"
     TV = "TV"
     ANIME = "Anime"
+    ANIME_MOVIE = "Anime-Movie"
     UNKNOWN = "Unknown"
 
 
 def classify(parsed: ParsedMedia) -> MediaType:
-    # Strong signals
+    # Anime with season/episode: TV Anime
     if parsed.is_anime:
+        # Heuristic: If it has season/episode, it's a TV Anime
+        if parsed.season is not None or parsed.episode is not None:
+            return MediaType.ANIME
+        # If it's anime, has a year, and no episode/season, treat as Anime-Movie
+        if parsed.year is not None and parsed.season is None and parsed.episode is None:
+            return MediaType.ANIME_MOVIE
+        # Fallback: just Anime
         return MediaType.ANIME
 
     if parsed.season is not None and parsed.episode is not None:

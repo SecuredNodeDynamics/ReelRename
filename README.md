@@ -11,7 +11,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 <p align="center">
-  <img src="screenshots/ReelRename.v1.1.0.png" alt="ReelRename Main Window" width="900">
+  <img src="screenshots/ReelRename.v1.2.0.png" alt="ReelRename Main Window" width="900">
   <br>
   <em>Main interface showing preview-first renaming workflow</em>
 </p>

@@ -31,7 +31,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.1.1"  # bump as you like
+APP_VERSION = "1.2.0"  # bump as you like
 
 
 class DropHint(QLabel):
@@ -45,16 +45,80 @@ class DropHint(QLabel):
 
 
 class MainWindow(QMainWindow):
-    # Column indexes
     COL_TYPE = 0
     COL_NAME = 1
     COL_FOLDER = 2
     COL_PROPOSED_NAME = 3
     COL_DEST = 4
 
-    def __init__(self, app) -> None:
+    # (Removed duplicate __init__ definition. Only one __init__ remains.)
+
+    def _apply_bulk_season_episode(self):
+        try:
+            start_ep = int(self.bulk_start_ep.text()) if self.bulk_start_ep.text() else 1
+        except Exception:
+            start_ep = 1
+        # Apply to all items in the list
+        # Determine a common show title for all items (strip trailing numbers)
+        import re
+        if self._items:
+            first_title = parse_filename(self._items[0].path.stem).title
+            # If the title is empty or 'Unknown Title', use the parent folder name
+            if not first_title or first_title == "Unknown Title":
+                show_title = self._items[0].path.parent.name
+            else:
+                show_title = re.sub(r"[\s_\-]*\d+$", "", first_title).strip()
+        else:
+            show_title = "Unknown Title"
+
+        for i, item in enumerate(self._items):
+            stem = item.path.stem
+            parsed = parse_filename(stem)
+            # Always use the parent folder name if the parsed title is missing or generic
+            effective_title = parsed.title
+            if not effective_title or effective_title == "Unknown Title" or effective_title == stem:
+                parent_name = item.path.parent.name
+                # If the parent is a season folder, use the grandparent as the show title
+                if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
+                    effective_title = item.path.parent.parent.name
+                else:
+                    effective_title = parent_name
+            # Force the show title to be the same for all items
+            parsed = replace(parsed, title=show_title if show_title else effective_title)
+            # Auto-detect season from parent folder if matches 'Season #'
+            season = None
+            for part in item.path.parts:
+                if part.lower().startswith('season '):
+                    try:
+                        season = int(part.split(' ', 1)[1])
+                        break
+                    except Exception:
+                        pass
+            # Fallback to selector if not found
+            if season is None:
+                try:
+                    season = int(self.bulk_season.currentText())
+                except Exception:
+                    season = 1
+            parsed = replace(parsed, season=season, episode=start_ep + i)
+            mtype = classify(parsed)
+            auto_dst = build_destination(
+                src=item.path,
+                parsed=parsed,
+                media_type=mtype,
+                library_root=self._library_root() if self._move_enabled() else None,
+                move_enabled=self._move_enabled(),
+            )
+            key = self._item_key(item)
+            # Debug print to verify override
+            print(f"[DEBUG] Bulk override for {item.name}: {auto_dst.name}")
+            self._override_dst[key] = auto_dst
+        self._render_table()
+        self.table.clearSelection()
+        self.table.viewport().update()
+
+    def __init__(self) -> None:
         super().__init__()
-        self.app = app
         self.is_dark = True
 
         self.setWindowTitle(APP_NAME)
@@ -148,6 +212,32 @@ class MainWindow(QMainWindow):
         top2.addWidget(self.root_edit, 1)
         top2.addWidget(self.btn_browse_root)
 
+
+        # Bulk rename controls with instructions
+        instruction_label = QLabel("<b>Step 1:</b> Preview bulk rename to set proposed names. <b>Step 2:</b> Click Rename to apply changes to files.")
+        layout.addWidget(instruction_label)
+
+        bulk_row = QHBoxLayout()
+        layout.addLayout(bulk_row)
+        bulk_row.addWidget(QLabel("Bulk Season:"))
+        self.bulk_season = QComboBox()
+        self.bulk_season.addItems([str(i) for i in range(1, 51)])
+        bulk_row.addWidget(self.bulk_season)
+        bulk_row.addSpacing(12)
+        bulk_row.addWidget(QLabel("Start Episode:"))
+        self.bulk_start_ep = QLineEdit()
+        self.bulk_start_ep.setPlaceholderText("1")
+        self.bulk_start_ep.setFixedWidth(60)
+        bulk_row.addWidget(self.bulk_start_ep)
+        bulk_row.addSpacing(12)
+        self.btn_apply_bulk = QPushButton("Preview Bulk Rename")
+        self.btn_apply_bulk.setToolTip("Preview and set proposed names for all items in the list. No files are changed yet.")
+        bulk_row.addWidget(self.btn_apply_bulk)
+        bulk_row.addStretch(1)
+
+        # Add tooltip to Rename button for clarity
+        self.btn_rename.setToolTip("Apply the proposed names to your files. This will rename/move files on disk.")
+
         # Drop hint
         self.drop_hint = DropHint()
         layout.addWidget(self.drop_hint)
@@ -207,6 +297,9 @@ QTableWidget::item:hover {
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.root_edit.textChanged.connect(lambda: self._render_table())
 
+        # Connect bulk rename button
+        self.btn_apply_bulk.clicked.connect(self._apply_bulk_season_episode)
+
         self._on_mode_changed()
         self._toggle_current_folder()
         self._refresh_buttons()
@@ -237,7 +330,7 @@ QTableWidget::item:hover {
         env_path = self._user_env_path()
         msg = (
             f"<b>{APP_NAME}</b> v{APP_VERSION}<br><br>"
-            "Rename and organize Movies, TV Shows, and Anime safely.<br><br>"
+            "Rename and organize Movies, TV Shows, Anime, and Anime-Movies safely.<br><br>"
             "<b>Key features</b><br>"
             "• Rename-in-place or Move to Library Root<br>"
             "• Proposed Name + Proposed Destination preview<br>"
@@ -248,15 +341,15 @@ QTableWidget::item:hover {
         QMessageBox.information(self, f"About {APP_NAME}", msg)
 
     def _user_guide_html(self) -> str:
-        env_path = self._user_env_path()
-        return f"""
-        <h2>{APP_NAME} — User Guide</h2>
+                env_path = self._user_env_path()
+                return f"""
+                <h2>{APP_NAME} — User Guide</h2>
 
-        <h3>1) Add media</h3>
-        <ul>
-          <li>Use <b>Add Files</b>, <b>Add Folder</b>, or drag &amp; drop into the drop zone.</li>
-          <li>The table shows: <b>Type</b>, original name, and the proposed rename.</li>
-        </ul>
+                <h3>1) Add media</h3>
+                <ul>
+                    <li>Use <b>Add Files</b>, <b>Add Folder</b>, or drag &amp; drop into the drop zone.</li>
+                    <li>The table shows: <b>Type</b> (Movie, TV, Anime, Anime-Movie), original name, and the proposed rename.</li>
+                </ul>
 
         <h3>2) Understand the columns</h3>
         <ul>
@@ -385,9 +478,11 @@ QTableWidget::item:hover {
     # ---------------------------
     def toggle_theme(self) -> None:
         if self.is_dark:
-            self.app.setPalette(light_palette())
+            from PySide6.QtWidgets import QApplication
+            QApplication.instance().setPalette(light_palette())
         else:
-            self.app.setPalette(dark_palette())
+            from PySide6.QtWidgets import QApplication
+            QApplication.instance().setPalette(dark_palette())
         self.is_dark = not self.is_dark
 
     # ---------------------------
@@ -513,6 +608,7 @@ QTableWidget::item:hover {
                     "Move mode enabled: select a valid Library Root to preview destinations.", 8000
                 )
 
+
             for item in self._items:
                 r = self.table.rowCount()
                 self.table.insertRow(r)
@@ -522,6 +618,44 @@ QTableWidget::item:hover {
                 stem = item.path.stem
                 parsed = parse_filename(stem)
                 mtype = classify(parsed)
+
+                # --- Auto-update type based on root folder ---
+                parent_parts = [p.lower() for p in item.path.parts]
+                if "movies" in parent_parts:
+                    mtype = MediaType.MOVIE
+                elif "tv" in parent_parts or "tv shows" in parent_parts:
+                    mtype = MediaType.TV
+                elif "anime-movies" in parent_parts:
+                    mtype = MediaType.ANIME_MOVIE
+                elif "anime" in parent_parts:
+                    mtype = MediaType.ANIME
+
+
+                # If the parsed title is missing or generic, use the show folder (grandparent if parent is a season folder)
+                effective_title = parsed.title
+                if not effective_title or effective_title == "Unknown Title" or effective_title == stem:
+                    parent_name = item.path.parent.name
+                    if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
+                        effective_title = item.path.parent.parent.name
+                    else:
+                        effective_title = parent_name
+                    parsed = replace(parsed, title=effective_title)
+
+                # Auto-detect season from parent folder if matches 'Season XX'
+                season = parsed.season
+                import re
+                parent_name = item.path.parent.name
+                m = re.match(r"season\s*(\d+)", parent_name, re.IGNORECASE)
+                if m:
+                    season = int(m.group(1))
+                # If still no season, default to 1
+                if not season:
+                    season = 1
+                # Auto-detect episode from filename or use file order if missing
+                episode = parsed.episode
+                if not episode:
+                    episode = r + 1  # 1-based index in the table
+                parsed = replace(parsed, season=season, episode=episode)
 
                 if mtype == MediaType.MOVIE and parsed.year is None and parsed.title:
                     year = self._try_fill_movie_year(parsed.title)
@@ -538,12 +672,15 @@ QTableWidget::item:hover {
 
                 if key in self._override_dst:
                     dst = self._override_dst[key]
+                    override_name = Path(dst).name
                 else:
                     dst = auto_dst
+                    override_name = Path(dst).name
 
                 if key in self._locked and key not in self._override_dst:
                     self._override_dst[key] = auto_dst
                     dst = auto_dst
+                    override_name = Path(dst).name
 
                 dst_path = Path(dst)
                 self._dst_paths.append(dst_path)
@@ -556,12 +693,10 @@ QTableWidget::item:hover {
                 self.table.setItem(r, self.COL_NAME, QTableWidgetItem(item.name))
                 self.table.setItem(r, self.COL_FOLDER, QTableWidgetItem(str(item.parent)))
 
-                # ✅ Proposed Name is now editable
-                proposed_name_item = QTableWidgetItem(dst_path.name)
+                proposed_name_item = QTableWidgetItem(override_name)
                 proposed_name_item.setFlags(proposed_name_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_PROPOSED_NAME, proposed_name_item)
 
-                # Proposed Destination remains editable
                 dest_item = QTableWidgetItem(str(dst_path))
                 dest_item.setFlags(dest_item.flags() | Qt.ItemIsEditable)
                 self.table.setItem(r, self.COL_DEST, dest_item)
@@ -698,14 +833,16 @@ QTableWidget::item:hover {
         if chosen == act_copy_dest:
             dest_text = self.table.item(row, self.COL_DEST).text()
             if dest_text:
-                self.app.clipboard().setText(dest_text)
+                from PySide6.QtWidgets import QApplication
+                QApplication.instance().clipboard().setText(dest_text)
                 self.statusBar().showMessage("Destination copied to clipboard", 2500)
             return
 
         if chosen == act_copy_name:
             name_text = self.table.item(row, self.COL_PROPOSED_NAME).text()
             if name_text:
-                self.app.clipboard().setText(name_text)
+                from PySide6.QtWidgets import QApplication
+                QApplication.instance().clipboard().setText(name_text)
                 self.statusBar().showMessage("Proposed name copied to clipboard", 2500)
             return
 
@@ -795,3 +932,8 @@ QTableWidget::item:hover {
             QMessageBox.information(self, "Undo Completed", f"Undone: {undone}")
 
         self._refresh_buttons()
+    COL_TYPE = 0
+    COL_NAME = 1
+    COL_FOLDER = 2
+    COL_PROPOSED_NAME = 3
+    COL_DEST = 4
