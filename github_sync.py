@@ -125,7 +125,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Auto-sync repo to GitHub (stash/pull/add/commit/push).")
     ap.add_argument("--path", default=".", help="Repo path (default: current directory).")
     ap.add_argument("--remote", default="origin", help="Remote (default: origin).")
-    ap.add_argument("--branch", default=None, help="Branch (default: current).")
+    ap.add_argument("--branch", default="main", help="Branch (default: main).")
     ap.add_argument("--message", default=None, help="Commit message.")
     ap.add_argument("--no-pull", action="store_true", help="Skip pull/rebase.")
     ap.add_argument("--no-commit", action="store_true", help="Skip commit.")
