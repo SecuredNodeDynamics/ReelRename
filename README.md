@@ -1,5 +1,5 @@
-![Version](https://img.shields.io/github/v/release/SecuredNodeDynamics/ReelRename)
-![License](https://img.shields.io/github/license/SecuredNodeDynamics/ReelRename)
+![Version](https://img.shields.io/github/v/release/artyo/ReelRename)
+![License](https://img.shields.io/github/license/artyo/ReelRename)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
 # 🎬 ReelRename
@@ -45,7 +45,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ## 📦 Installation
 
 ### 🔹 Windows (Recommended)
-1. Download `ReelRename-Setup.exe` from the **Releases** page
+1. Download `ReelRename-Setup.exe` (v1.2.0) from the **Releases** page
 2. Double-click the installer
 3. Follow the setup wizard
 4. Launch ReelRename from the Start Menu
@@ -56,7 +56,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 ### 🔹 Linux (AppImage)
-1. Download `ReelRename-x86_64.AppImage`
+1. Download `ReelRename-x86_64.AppImage` (v1.2.0)
 2. Make it executable:
    ```bash
    chmod +x ReelRename-x86_64.AppImage
