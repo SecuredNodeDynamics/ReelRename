@@ -142,9 +142,9 @@ def main() -> None:
 
     ensure_script_ignored(repo)
 
-    branch = args.branch or current_branch(repo)
+    branch = args.branch if args.branch is not None else current_branch(repo)
     if not branch or branch == "HEAD":
-        fail("Could not determine current branch.")
+        branch = "main"
     info(f"Branch: {branch}")
 
     if not has_remote(repo, args.remote):
