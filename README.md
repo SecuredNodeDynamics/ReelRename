@@ -1,5 +1,5 @@
-![Version](https://img.shields.io/github/v/release/artyo/ReelRename)
-![License](https://img.shields.io/github/license/artyo/ReelRename)
+![Version](https://img.shields.io/github/v/release/SecuredNodeDynamics/ReelRename)
+![License](https://img.shields.io/github/license/SecuredNodeDynamics/ReelRename)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
 # 🎬 ReelRename
