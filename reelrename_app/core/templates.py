@@ -67,15 +67,15 @@ def build_destination(
         dest_dir = root / "TV Shows" / show / sdir
         return (dest_dir / new_filename).resolve()
 
-    if media_type == MediaType.ANIME:
-        # If it has an episode number, treat as series; otherwise treat as anime movie
-        title = sanitize_component(parsed.title or "Unknown Anime")
-        if parsed.episode is not None:
-            sdir = season_folder(parsed.season)
-            dest_dir = root / "Anime" / title / sdir
-            return (dest_dir / new_filename).resolve()
 
-        # Anime movie / special
+    if media_type == MediaType.ANIME:
+        title = sanitize_component(parsed.title or "Unknown Anime")
+        sdir = season_folder(parsed.season)
+        dest_dir = root / "Anime" / title / sdir
+        return (dest_dir / new_filename).resolve()
+
+    if media_type == MediaType.ANIME_MOVIE:
+        title = sanitize_component(parsed.title or "Unknown Anime Movie")
         folder = title
         if parsed.year:
             folder = sanitize_component(f"{title} ({parsed.year})")

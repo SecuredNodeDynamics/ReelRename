@@ -49,7 +49,7 @@ def main() -> int:
         if not icon.isNull():
             app.setWindowIcon(icon)
 
-    win = MainWindow(app)
+    win = MainWindow()
     if icon_path.exists():
         win.setWindowIcon(QIcon(str(icon_path)))
 

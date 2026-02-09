@@ -78,8 +78,12 @@ def parse_filename(stem: str) -> ParsedMedia:
     # TV patterns: SxxEyy or 2x05
     m = _SXXEYY_RE.search(rest) or _XXxYY_RE.search(rest)
     if m:
+        # For anime/TV, strip trailing numbers from the title part (e.g., 'Bleach 1' -> 'Bleach')
         title_part = rest[:m.start()].strip(" -._()[]{}")
-        title = _cleanup_title(title_part)
+        import re
+        cleaned_title = _cleanup_title(title_part)
+        # Remove trailing numbers (with or without space, underscore, or dash)
+        title = re.sub(r"[\s_\-]*\d+$", "", cleaned_title).strip()
         season = int(m.group("s"))
         episode = int(m.group("e"))
         is_anime = bool(group)  # heuristic: anime releases often have group tags

@@ -12,23 +12,50 @@ def proposed_name(parsed: ParsedMedia, media_type: MediaType, ext: str) -> str:
       - Anime: Series Name - Exx.ext
       - Unknown: title-ish + ext
     """
-    title = parsed.title or "Unknown Title"
+    # For anime, strip trailing numbers from the title (e.g., 'Bleach 1' -> 'Bleach')
+    import re
+    if media_type == MediaType.ANIME:
+        # Remove trailing numbers and whitespace from the title
+        title = re.sub(r"\s*\d+$", "", parsed.title or "Unknown Title").strip()
+    else:
+        title = parsed.title or "Unknown Title"
 
     if media_type == MediaType.MOVIE:
         if parsed.year:
+            if parsed.season is not None:
+                return f"{title} (Season {parsed.season:02d}, {parsed.year}){ext}"
             return f"{title} ({parsed.year}){ext}"
+        if parsed.season is not None:
+            return f"{title} (Season {parsed.season:02d}){ext}"
         return f"{title}{ext}"
 
     if media_type == MediaType.TV:
         if parsed.season is not None and parsed.episode is not None:
             return f"{title} - S{parsed.season:02d}E{parsed.episode:02d}{ext}"
+        if parsed.season is not None:
+            return f"{title} - S{parsed.season:02d}{ext}"
         if parsed.episode is not None:
             return f"{title} - E{parsed.episode:02d}{ext}"
         return f"{title}{ext}"
 
     if media_type == MediaType.ANIME:
+        if parsed.season is not None and parsed.episode is not None:
+            return f"{title} - S{parsed.season:02d}E{parsed.episode:02d}{ext}"
+        if parsed.season is not None:
+            return f"{title} - S{parsed.season:02d}{ext}"
         if parsed.episode is not None:
             return f"{title} - E{parsed.episode:02d}{ext}"
         return f"{title}{ext}"
 
+    if media_type == MediaType.ANIME_MOVIE:
+        if parsed.year:
+            if parsed.season is not None:
+                return f"{title} (Anime Movie, Season {parsed.season:02d}, {parsed.year}){ext}"
+            return f"{title} (Anime Movie, {parsed.year}){ext}"
+        if parsed.season is not None:
+            return f"{title} (Anime Movie, Season {parsed.season:02d}){ext}"
+        return f"{title} (Anime Movie){ext}"
+
+    if parsed.season is not None:
+        return f"{title} (Season {parsed.season:02d}){ext}"
     return f"{title}{ext}"
