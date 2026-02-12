@@ -31,7 +31,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.8"  # bump as you like
+APP_VERSION = "1.2.10"  # bump as you like
 
 
 class DropHint(QLabel):

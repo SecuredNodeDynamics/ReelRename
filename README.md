@@ -11,7 +11,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 <p align="center">
-  <img src="screenshots/ReelRename.v1.2.8png" alt="ReelRename Main Window" width="900">
+  <img src="screenshots/ReelRename.v1.2.10png" alt="ReelRename Main Window" width="900">
   <br>
   <em>Main interface showing preview-first renaming workflow</em>
 </p>
@@ -45,7 +45,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ## 📦 Installation
 
 ### 🔹 Windows (Recommended)
-1. Download `ReelRename-Setup.exe` (v1.2.8) from the **Releases** page
+1. Download `ReelRename-Setup.exe` (v1.2.10) from the **Releases** page
 2. Double-click the installer
 3. Follow the setup wizard
 4. Launch ReelRename from the Start Menu
@@ -56,7 +56,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 ### 🔹 Linux (AppImage)
-1. Download `ReelRename-x86_64.AppImage` (v1.2.8)
+1. Download `ReelRename-x86_64.AppImage` (v1.2.10)
 2. Make it executable:
    ```bash
    chmod +x ReelRename-x86_64.AppImage
@@ -78,7 +78,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
   > Select Developer
   > Complete the short application form
     (Example description: Personal media organization tool)
-  Once approved, you will receive an API Key (v1.2.8 auth).
+  Once approved, you will receive an API Key (v1.2.10 auth).
 
 ## 📌 Step 3: Add the API Key in ReelRename
 
