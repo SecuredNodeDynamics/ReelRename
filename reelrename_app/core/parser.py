@@ -14,6 +14,7 @@ class ParsedMedia:
     episode: Optional[int] = None
     is_anime: bool = False
     release_group: Optional[str] = None
+    episode_title: Optional[str] = None
 
 
 _GROUP_RE = re.compile(r"^\[(?P<group>[^\]]{2,40})\]\s*(?P<rest>.+)$")

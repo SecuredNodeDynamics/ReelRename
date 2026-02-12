@@ -31,7 +31,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.4"  # bump as you like
+APP_VERSION = "1.2.8"  # bump as you like
 
 
 class DropHint(QLabel):
@@ -102,6 +102,13 @@ class MainWindow(QMainWindow):
                     season = 1
             parsed = replace(parsed, season=season, episode=start_ep + i)
             mtype = classify(parsed)
+
+            # --- Fetch episode title for TV and Anime ---
+            if (mtype == MediaType.TV or mtype == MediaType.ANIME) and parsed.season and parsed.episode:
+                episode_title = self._try_fill_episode_title(show_title, parsed.season, parsed.episode)
+                if episode_title:
+                    parsed = replace(parsed, episode_title=episode_title)
+
             auto_dst = build_destination(
                 src=item.path,
                 parsed=parsed,
@@ -585,6 +592,29 @@ QTableWidget::item:hover {
 
         return None
 
+    def _try_fill_episode_title(self, show_title: str, season: int, episode: int) -> str | None:
+        """Fetch episode title from TMDB for TV shows and Anime."""
+        if not self.tmdb.is_configured():
+            if not self._warned_tmdb_missing_key:
+                self.statusBar().showMessage("TMDB_API_KEY not set — episode titles won't auto-fill.", 8000)
+                self._warned_tmdb_missing_key = True
+            return None
+
+        try:
+            # First, search for the TV show
+            tv_result = self.tmdb.search_tv(show_title)
+            if not tv_result:
+                return None
+
+            # Then get the episode details
+            episode_result = self.tmdb.get_episode_details(tv_result.tmdb_id, season, episode)
+            if episode_result and episode_result.episode_title:
+                return episode_result.episode_title
+        except Exception:
+            return None
+
+        return None
+
     def _item_key(self, item: MediaItem) -> str:
         return str(item.path)
 
@@ -661,6 +691,12 @@ QTableWidget::item:hover {
                     year = self._try_fill_movie_year(parsed.title)
                     if year:
                         parsed = replace(parsed, year=year)
+
+                # --- Fetch episode title for TV and Anime ---
+                if (mtype == MediaType.TV or mtype == MediaType.ANIME) and parsed.season and parsed.episode:
+                    episode_title = self._try_fill_episode_title(parsed.title, parsed.season, parsed.episode)
+                    if episode_title:
+                        parsed = replace(parsed, episode_title=episode_title)
 
                 auto_dst = build_destination(
                     src=item.path,

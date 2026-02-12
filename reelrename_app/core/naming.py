@@ -31,20 +31,32 @@ def proposed_name(parsed: ParsedMedia, media_type: MediaType, ext: str) -> str:
 
     if media_type == MediaType.TV:
         if parsed.season is not None and parsed.episode is not None:
-            return f"{title} - S{parsed.season:02d}E{parsed.episode:02d}{ext}"
+            base = f"{title} - S{parsed.season:02d}E{parsed.episode:02d}"
+            if parsed.episode_title:
+                return f"{base} - {parsed.episode_title}{ext}"
+            return f"{base}{ext}"
         if parsed.season is not None:
             return f"{title} - S{parsed.season:02d}{ext}"
         if parsed.episode is not None:
-            return f"{title} - E{parsed.episode:02d}{ext}"
+            base = f"{title} - E{parsed.episode:02d}"
+            if parsed.episode_title:
+                return f"{base} - {parsed.episode_title}{ext}"
+            return f"{base}{ext}"
         return f"{title}{ext}"
 
     if media_type == MediaType.ANIME:
         if parsed.season is not None and parsed.episode is not None:
-            return f"{title} - S{parsed.season:02d}E{parsed.episode:02d}{ext}"
+            base = f"{title} - S{parsed.season:02d}E{parsed.episode:02d}"
+            if parsed.episode_title:
+                return f"{base} - {parsed.episode_title}{ext}"
+            return f"{base}{ext}"
         if parsed.season is not None:
             return f"{title} - S{parsed.season:02d}{ext}"
         if parsed.episode is not None:
-            return f"{title} - E{parsed.episode:02d}{ext}"
+            base = f"{title} - E{parsed.episode:02d}"
+            if parsed.episode_title:
+                return f"{base} - {parsed.episode_title}{ext}"
+            return f"{base}{ext}"
         return f"{title}{ext}"
 
     if media_type == MediaType.ANIME_MOVIE:
