@@ -77,3 +77,6 @@ Desktop.ini
 github_sync.py
 installer.iss
 build_app.py
+reelrename.spec
+gen.backup.py
+git.push.py

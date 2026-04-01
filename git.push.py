@@ -110,24 +110,32 @@ def stage_changes(dry_run: bool) -> bool:
     """Stage all tracked modifications and any untracked root tool scripts.
     Returns True if anything was staged."""
 
-    # Check what git currently sees
-    status = _run_out(["git", "status", "--porcelain"])
-    if not status:
+    # Use _run directly so leading spaces in porcelain output are preserved
+    result = _run(["git", "status", "--porcelain"], capture=True, check=False)
+    raw    = result.stdout  # do NOT strip — leading spaces are significant
+    if not raw.strip():
         return False
 
-    lines   = status.splitlines()
-    to_add  = []
+    lines  = raw.splitlines()
+    to_add = []
 
     for line in lines:
-        code = line[:2]
-        path = line[3:].strip().strip('"')
+        if len(line) < 4:
+            continue
+        xy   = line[0:2]
+        path = line[3:]          # preserve leading dots / slashes exactly
 
-        # Tracked modifications / deletions
-        if code[1] in ("M", "D") or code[0] in ("M", "D"):
+        # Strip surrounding quotes git uses for paths with spaces
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+
+        # xy[0] = index status, xy[1] = worktree status
+        # Only 'git add' files that have UN-staged worktree changes.
+        # Files already staged (xy[0] in M/D via git rm --cached etc.) are
+        # committed as-is and must NOT be passed to git add again.
+        if xy[1] in ("M", "D"):
             to_add.append(path)
-
-        # Untracked root-level tool scripts
-        elif code == "??":
+        elif xy == "??":
             fname = Path(path).name
             if fname in ROOT_TOOLS:
                 to_add.append(path)
