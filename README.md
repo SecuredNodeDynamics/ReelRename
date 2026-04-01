@@ -78,7 +78,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
   > Select Developer
   > Complete the short application form
     (Example description: Personal media organization tool)
-  Once approved, you will receive an API Key (v1.2.10 auth).
+  Once approved, you will receive an API Key (v3 auth).
 
 ## 📌 Step 3: Add the API Key in ReelRename
 
