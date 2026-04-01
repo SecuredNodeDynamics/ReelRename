@@ -45,7 +45,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ## 📦 Installation
 
 ### 🔹 Windows (Recommended)
-1. Download `ReelRename-Setup.exe` (v1.2.10) from the **Releases** page
+1. Download `ReelRename-Setup.exe` (v1.2.11) from the **Releases** page
 2. Double-click the installer
 3. Follow the setup wizard
 4. Launch ReelRename from the Start Menu
@@ -56,7 +56,7 @@ Built with **Python + PySide6**, ReelRename is designed to replace fragile bash 
 ---
 
 ### 🔹 Linux (AppImage)
-1. Download `ReelRename-x86_64.AppImage` (v1.2.10)
+1. Download `ReelRename-x86_64.AppImage` (v1.2.11)
 2. Make it executable:
    ```bash
    chmod +x ReelRename-x86_64.AppImage
