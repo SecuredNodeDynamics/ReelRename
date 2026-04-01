@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Set
@@ -62,5 +63,27 @@ def scan_paths(paths: Iterable[str]) -> List[MediaItem]:
                         seen.add(rp)
                         found.append(MediaItem(rp))
 
-    found.sort(key=lambda x: (x.parent.lower(), x.name.lower()))
+    found.sort(key=_sort_key)
     return found
+
+
+# Matches a stem that ends with  -<digits>  e.g. "ShowName-02" or "ShowName - 02"
+_TRAILING_NUM_RE = re.compile(r'^(.*?)-\s*(\d+)$')
+
+
+def _sort_key(item: MediaItem) -> tuple:
+    """
+    Sort by parent folder, then by base name and trailing dash-number.
+    A file with no trailing -XX suffix is assigned num=0 so it always
+    sorts before -02, -03, etc.
+    Example order: ShowName.mkv → ShowName-02.mkv → ShowName-03.mkv
+    """
+    stem = item.path.stem.lower()
+    m = _TRAILING_NUM_RE.match(stem)
+    if m:
+        base = m.group(1).rstrip()
+        num = int(m.group(2))
+    else:
+        base = stem
+        num = 0
+    return (item.parent.lower(), base, num, item.name.lower())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional, Dict, Set
@@ -31,7 +32,35 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.10"  # bump as you like
+APP_VERSION = "1.2.11"  # bump as you like
+
+# Strips season numbers, year, and quality tags from a download folder name
+# so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
+# both resolve to the single show folder "Yellowstone".
+_FOLDER_STRIP_RE = re.compile(
+    r'(?:'
+    r'[\s._\-]+(?:season|series)[\s._\-]*\d+'          # Season 2 / Series 1
+    r'|[\s._\-]+s\d{1,2}(?:e\d+)?'                     # S02 / S02E01
+    r'|[\s._\-]+(?:complete|1080p|720p|2160p|4k'        # quality tags
+    r'|hdtv|bluray|bdrip|webrip|web[\-.]?dl'
+    r'|x264|x265|hevc|av1)'
+    r'|[\s._\-]+(?:19|20)\d{2}'                         # year  e.g. 2018
+    r')+$',
+    re.IGNORECASE,
+)
+
+
+def _folder_show_title(folder_name: str) -> str:
+    """Strip season/year/quality suffixes from a folder name to get the base show title.
+
+    Examples:
+        "Yellowstone Season 2"          -> "Yellowstone"
+        "Breaking.Bad.S03.1080p"        -> "Breaking Bad"
+        "Attack on Titan"               -> "Attack on Titan"  (unchanged)
+    """
+    cleaned = _FOLDER_STRIP_RE.sub("", folder_name)
+    cleaned = cleaned.replace(".", " ").replace("_", " ").strip(" -._")
+    return cleaned or folder_name
 
 
 class DropHint(QLabel):
@@ -58,50 +87,44 @@ class MainWindow(QMainWindow):
             start_ep = int(self.bulk_start_ep.text()) if self.bulk_start_ep.text() else 1
         except Exception:
             start_ep = 1
-        # Apply to all items in the list
-        # Determine a common show title for all items (strip trailing numbers)
-        import re
         if self._items:
             first_title = parse_filename(self._items[0].path.stem).title
-            # If the title is empty or 'Unknown Title', use the parent folder name
             if not first_title or first_title == "Unknown Title":
-                show_title = self._items[0].path.parent.name
+                show_title = _folder_show_title(self._items[0].path.parent.name)
             else:
                 show_title = re.sub(r"[\s_\-]*\d+$", "", first_title).strip()
         else:
             show_title = "Unknown Title"
 
         for i, item in enumerate(self._items):
+            key = self._item_key(item)
             stem = item.path.stem
             parsed = parse_filename(stem)
-            # Always use the parent folder name if the parsed title is missing or generic
             effective_title = parsed.title
             if not effective_title or effective_title == "Unknown Title" or effective_title == stem:
                 parent_name = item.path.parent.name
-                # If the parent is a season folder, use the grandparent as the show title
                 if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
-                    effective_title = item.path.parent.parent.name
+                    effective_title = _folder_show_title(item.path.parent.parent.name)
                 else:
-                    effective_title = parent_name
-            # Force the show title to be the same for all items
+                    effective_title = _folder_show_title(parent_name)
             parsed = replace(parsed, title=show_title if show_title else effective_title)
-            # Auto-detect season from parent folder if matches 'Season #'
+            # Auto-detect season from parent folder — check anywhere in the folder name
             season = None
             for part in item.path.parts:
-                if part.lower().startswith('season '):
+                m = re.search(r"\bseason\s*(\d{1,2})\b", part, re.IGNORECASE)
+                if m:
                     try:
-                        season = int(part.split(' ', 1)[1])
+                        season = int(m.group(1))
                         break
                     except Exception:
                         pass
-            # Fallback to selector if not found
             if season is None:
                 try:
                     season = int(self.bulk_season.currentText())
                 except Exception:
                     season = 1
             parsed = replace(parsed, season=season, episode=start_ep + i)
-            mtype = classify(parsed)
+            mtype = self._manual_types.get(key, classify(parsed))
 
             # --- Fetch episode title for TV and Anime ---
             if (mtype == MediaType.TV or mtype == MediaType.ANIME) and parsed.season and parsed.episode:
@@ -116,10 +139,7 @@ class MainWindow(QMainWindow):
                 library_root=self._library_root() if self._move_enabled() else None,
                 move_enabled=self._move_enabled(),
             )
-            key = self._item_key(item)
-            # Debug print to verify override
-            print(f"[DEBUG] Bulk override for {item.name}: {auto_dst.name}")
-            self._override_dst[key] = auto_dst
+            self._override_dst[key] = auto_dest
         self._render_table()
         self.table.clearSelection()
         self.table.viewport().update()
@@ -137,6 +157,7 @@ class MainWindow(QMainWindow):
         # Manual overrides & locking
         self._override_dst: Dict[str, Path] = {}
         self._locked: Set[str] = set()
+        self._manual_types: Dict[str, MediaType] = {}
         self._rendering = False
 
         # NEW: edit guard to avoid recursive cellChanged events
@@ -660,22 +681,23 @@ QTableWidget::item:hover {
                 elif "anime" in parent_parts:
                     mtype = MediaType.ANIME
 
+                # Manual type selection always takes priority over auto-detection
+                mtype = self._manual_types.get(key, mtype)
 
                 # If the parsed title is missing or generic, use the show folder (grandparent if parent is a season folder)
                 effective_title = parsed.title
                 if not effective_title or effective_title == "Unknown Title" or effective_title == stem:
                     parent_name = item.path.parent.name
                     if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
-                        effective_title = item.path.parent.parent.name
+                        effective_title = _folder_show_title(item.path.parent.parent.name)
                     else:
-                        effective_title = parent_name
+                        effective_title = _folder_show_title(parent_name)
                     parsed = replace(parsed, title=effective_title)
 
-                # Auto-detect season from parent folder if matches 'Season XX'
+                # Auto-detect season from parent folder if matches 'Season XX' anywhere in the name
                 season = parsed.season
-                import re
                 parent_name = item.path.parent.name
-                m = re.match(r"season\s*(\d+)", parent_name, re.IGNORECASE)
+                m = re.search(r"\bseason\s*(\d{1,2})\b", parent_name, re.IGNORECASE)
                 if m:
                     season = int(m.group(1))
                 # If still no season, default to 1
@@ -721,12 +743,24 @@ QTableWidget::item:hover {
                 dst_path = Path(dst)
                 self._dst_paths.append(dst_path)
 
-                type_text = str(mtype.value)
+                type_combo = QComboBox()
+                type_combo.addItems([mt.value for mt in MediaType])
+                type_combo.blockSignals(True)
+                type_combo.setCurrentText(mtype.value)
+                type_combo.blockSignals(False)
                 if key in self._locked:
-                    type_text += " 🔒"
+                    type_combo.setToolTip("🔒 Row is locked — right-click to unlock")
+                else:
+                    type_combo.setToolTip("Click to manually set the media type")
+                type_combo.currentTextChanged.connect(
+                    lambda text, k=key: self._on_type_changed(k, text)
+                )
+                self.table.setCellWidget(r, self.COL_TYPE, type_combo)
 
-                self.table.setItem(r, self.COL_TYPE, QTableWidgetItem(type_text))
-                self.table.setItem(r, self.COL_NAME, QTableWidgetItem(item.name))
+                name_item = QTableWidgetItem(item.name)
+                if key in self._locked:
+                    name_item.setToolTip("🔒 Row is locked — right-click to unlock")
+                self.table.setItem(r, self.COL_NAME, name_item)
                 self.table.setItem(r, self.COL_FOLDER, QTableWidgetItem(str(item.parent)))
 
                 proposed_name_item = QTableWidgetItem(override_name)
@@ -747,6 +781,7 @@ QTableWidget::item:hover {
         self._dst_paths.clear()
         self._override_dst.clear()
         self._locked.clear()
+        self._manual_types.clear()
         self.table.setRowCount(0)
         self._update_status()
         self._refresh_buttons()
@@ -822,6 +857,55 @@ QTableWidget::item:hover {
 
             self.statusBar().showMessage(f"Manual name set for: {self._items[row].name}", 4000)
             return
+
+    def _on_type_changed(self, key: str, type_str: str) -> None:
+        if self._rendering:
+            return
+        try:
+            new_type = MediaType(type_str)
+        except ValueError:
+            return
+
+        self._manual_types[key] = new_type
+
+        # Cascade: when switching to TV or Anime, apply the same type to every
+        # other loaded item that belongs to the same show.
+        if new_type in (MediaType.TV, MediaType.ANIME):
+            changed_item = next((i for i in self._items if self._item_key(i) == key), None)
+            if changed_item is not None:
+                show_title = self._effective_title_for_item(changed_item)
+                cascade_count = 0
+                for item in self._items:
+                    item_key = self._item_key(item)
+                    if item_key == key:
+                        continue
+                    if self._effective_title_for_item(item) == show_title:
+                        self._manual_types[item_key] = new_type
+                        cascade_count += 1
+                if cascade_count:
+                    self.statusBar().showMessage(
+                        f"Updated {cascade_count + 1} episodes of \"{changed_item.path.parent.name}\" to {new_type.value}",
+                        5000,
+                    )
+
+        self._render_table()
+
+    def _effective_title_for_item(self, item: MediaItem) -> str:
+        """
+        Compute the effective show title for an item using the same
+        folder-fallback logic as _render_table.  Used to group episodes
+        from the same show for cascade type changes.
+        """
+        stem = item.path.stem
+        parsed = parse_filename(stem)
+        title = parsed.title
+        if not title or title == "Unknown Title" or title == stem:
+            parent_name = item.path.parent.name
+            if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
+                title = _folder_show_title(item.path.parent.parent.name)
+            else:
+                title = _folder_show_title(parent_name)
+        return title.lower().strip()
 
     def _show_context_menu(self, pos) -> None:
         index = self.table.indexAt(pos)
@@ -921,6 +1005,7 @@ QTableWidget::item:hover {
         new_items: List[MediaItem] = []
         new_override: Dict[str, Path] = {}
         new_locked: Set[str] = set()
+        new_manual_types: Dict[str, MediaType] = {}
 
         for item in self._items:
             old_key = self._item_key(item)
@@ -933,10 +1018,13 @@ QTableWidget::item:hover {
                 new_override[new_key] = self._override_dst[old_key]
             if old_key in self._locked:
                 new_locked.add(new_key)
+            if old_key in self._manual_types:
+                new_manual_types[new_key] = self._manual_types[old_key]
 
         self._items = new_items
         self._override_dst = new_override
         self._locked = new_locked
+        self._manual_types = new_manual_types
 
         self._render_table()
         QMessageBox.information(self, "Complete", f"Applied: {len(ops)}\nSkipped/Conflicts: {bad_count}")
@@ -968,8 +1056,3 @@ QTableWidget::item:hover {
             QMessageBox.information(self, "Undo Completed", f"Undone: {undone}")
 
         self._refresh_buttons()
-    COL_TYPE = 0
-    COL_NAME = 1
-    COL_FOLDER = 2
-    COL_PROPOSED_NAME = 3
-    COL_DEST = 4
