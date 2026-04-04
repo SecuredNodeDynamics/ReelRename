@@ -11,7 +11,7 @@ from reelrename_app.core.naming import proposed_name
 
 _WINDOWS_FORBIDDEN = r'<>:"/\\|?*'
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")
-_SEASON_DIR_RE = re.compile(r"^season\s*\d{1,2}$", re.IGNORESPACE | re.IGNORECASE)
+_SEASON_DIR_RE = re.compile(r"^season\s*\d{1,2}$", re.IGNORECASE)
 
 
 def sanitize_component(name: str) -> str:

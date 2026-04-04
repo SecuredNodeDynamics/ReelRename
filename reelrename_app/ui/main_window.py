@@ -32,7 +32,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.15"  # bump as you like
+APP_VERSION = "1.2.16"  # bump as you like
 
 # Strips season numbers, year, and quality tags from a download folder name
 # so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
