@@ -32,7 +32,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.11"  # bump as you like
+APP_VERSION = "1.2.12"  # bump as you like
 
 # Strips season numbers, year, and quality tags from a download folder name
 # so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
@@ -48,6 +48,30 @@ _FOLDER_STRIP_RE = re.compile(
     r')+$',
     re.IGNORECASE,
 )
+
+_TRAILING_NUM_SUFFIX_RE = re.compile(r'-(\d{1,3})$')
+_EP_TOKEN_RE = re.compile(r'\b(?:episode|ep|e)\s*\d{1,3}\b', re.IGNORECASE)
+
+
+def _episode_from_suffix(stem: str, parsed_episode: Optional[int]) -> Optional[int]:
+    """Infer episode from a trailing -NN suffix.
+
+    Handles download packs where every filename contains "Episode 1" text but
+    each subsequent file is suffixed like -01, -02, ...
+    """
+    m = _TRAILING_NUM_SUFFIX_RE.search(stem)
+    if not m:
+        return parsed_episode
+
+    suffix_num = int(m.group(1))
+
+    # If the stem already contains an explicit Episode token (e.g. Episode 1)
+    # treat -NN as an offset so: base=1, -01 => 2, -02 => 3, ...
+    if parsed_episode is not None and _EP_TOKEN_RE.search(stem):
+        return parsed_episode + suffix_num
+
+    # Otherwise treat the suffix as the episode itself.
+    return suffix_num
 
 
 def _folder_show_title(folder_name: str) -> str:
@@ -92,7 +116,7 @@ class MainWindow(QMainWindow):
             if not first_title or first_title == "Unknown Title":
                 show_title = _folder_show_title(self._items[0].path.parent.name)
             else:
-                show_title = re.sub(r"[\s_\-]*\d+$", "", first_title).strip()
+                show_title = _folder_show_title(first_title)
         else:
             show_title = "Unknown Title"
 
@@ -694,6 +718,13 @@ QTableWidget::item:hover {
                         effective_title = _folder_show_title(parent_name)
                     parsed = replace(parsed, title=effective_title)
 
+                # Normalize TV/Anime title even when parser returns a value like
+                # "Show Name Season 1" so folder/name remains just "Show Name".
+                if mtype in (MediaType.TV, MediaType.ANIME) and parsed.title:
+                    normalized_title = _folder_show_title(parsed.title)
+                    if normalized_title and normalized_title != parsed.title:
+                        parsed = replace(parsed, title=normalized_title)
+
                 # Auto-detect season from parent folder if matches 'Season XX' anywhere in the name
                 season = parsed.season
                 parent_name = item.path.parent.name
@@ -703,8 +734,8 @@ QTableWidget::item:hover {
                 # If still no season, default to 1
                 if not season:
                     season = 1
-                # Auto-detect episode from filename or use file order if missing
-                episode = parsed.episode
+                # Auto-detect episode from filename/suffix or use file order if missing
+                episode = _episode_from_suffix(stem, parsed.episode)
                 if not episode:
                     episode = r + 1  # 1-based index in the table
                 parsed = replace(parsed, season=season, episode=episode)
