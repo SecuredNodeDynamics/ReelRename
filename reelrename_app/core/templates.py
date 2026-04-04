@@ -11,6 +11,7 @@ from reelrename_app.core.naming import proposed_name
 
 _WINDOWS_FORBIDDEN = r'<>:"/\\|?*'
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")
+_SEASON_DIR_RE = re.compile(r"^season\s*\d{1,2}$", re.IGNORESPACE | re.IGNORECASE)
 
 
 def sanitize_component(name: str) -> str:
@@ -22,6 +23,17 @@ def sanitize_component(name: str) -> str:
     name = "".join("_" if c in _WINDOWS_FORBIDDEN else c for c in name)
     name = re.sub(r"\s{2,}", " ", name).strip()
     return name or "Unknown"
+
+
+def _find_existing_child_dir_case_insensitive(parent: Path, target_name: str) -> Optional[Path]:
+    """Return an existing child directory whose name matches target_name case-insensitively."""
+    try:
+        for child in parent.iterdir():
+            if child.is_dir() and child.name.lower() == target_name.lower():
+                return child
+    except Exception:
+        return None
+    return None
 
 
 def season_folder(season: Optional[int]) -> str:
@@ -64,6 +76,40 @@ def build_destination(
             if parsed.year:
                 folder = sanitize_component(f"{title} ({parsed.year})")
             dest_dir = src.parent if src.parent.name == folder else (src.parent / folder)
+            return (dest_dir / new_filename).resolve()
+
+        # In-place behavior for TV: ensure Show/Season XX structure.
+        if media_type == MediaType.TV:
+            show = sanitize_component(parsed.title or "Unknown Show")
+            sdir = season_folder(parsed.season)
+
+            # If already under Show/Season NN use that show folder base.
+            if _SEASON_DIR_RE.match(src.parent.name) and src.parent.parent != src.parent:
+                current_show_dir = src.parent.parent
+            elif src.parent.name.lower() == show.lower():
+                current_show_dir = src.parent
+            else:
+                # Look for existing sibling show folder so Season 2 joins Season 1 tree.
+                existing_show = _find_existing_child_dir_case_insensitive(src.parent, show)
+                current_show_dir = existing_show if existing_show is not None else (src.parent / show)
+
+            dest_dir = current_show_dir / sdir
+            return (dest_dir / new_filename).resolve()
+
+        # In-place behavior for Anime: ensure Show/Season XX structure.
+        if media_type == MediaType.ANIME:
+            show = sanitize_component(parsed.title or "Unknown Anime")
+            sdir = season_folder(parsed.season)
+
+            if _SEASON_DIR_RE.match(src.parent.name) and src.parent.parent != src.parent:
+                current_show_dir = src.parent.parent
+            elif src.parent.name.lower() == show.lower():
+                current_show_dir = src.parent
+            else:
+                existing_show = _find_existing_child_dir_case_insensitive(src.parent, show)
+                current_show_dir = existing_show if existing_show is not None else (src.parent / show)
+
+            dest_dir = current_show_dir / sdir
             return (dest_dir / new_filename).resolve()
 
         return (src.parent / new_filename).resolve()
