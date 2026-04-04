@@ -32,7 +32,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.12"  # bump as you like
+APP_VERSION = "1.2.13"  # bump as you like
 
 # Strips season numbers, year, and quality tags from a download folder name
 # so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
@@ -725,20 +725,28 @@ QTableWidget::item:hover {
                     if normalized_title and normalized_title != parsed.title:
                         parsed = replace(parsed, title=normalized_title)
 
-                # Auto-detect season from parent folder if matches 'Season XX' anywhere in the name
-                season = parsed.season
-                parent_name = item.path.parent.name
-                m = re.search(r"\bseason\s*(\d{1,2})\b", parent_name, re.IGNORECASE)
-                if m:
-                    season = int(m.group(1))
-                # If still no season, default to 1
-                if not season:
-                    season = 1
-                # Auto-detect episode from filename/suffix or use file order if missing
-                episode = _episode_from_suffix(stem, parsed.episode)
-                if not episode:
-                    episode = r + 1  # 1-based index in the table
-                parsed = replace(parsed, season=season, episode=episode)
+                # Auto-detect season/episode only for episodic media.
+                if mtype in (MediaType.TV, MediaType.ANIME):
+                    # Auto-detect season from parent folder if matches 'Season XX' anywhere in the name
+                    season = parsed.season
+                    parent_name = item.path.parent.name
+                    m = re.search(r"\bseason\s*(\d{1,2})\b", parent_name, re.IGNORECASE)
+                    if m:
+                        season = int(m.group(1))
+                    # If still no season, default to 1
+                    if not season:
+                        season = 1
+
+                    # Auto-detect episode from filename/suffix or use file order if missing
+                    episode = _episode_from_suffix(stem, parsed.episode)
+                    if not episode:
+                        episode = r + 1  # 1-based index in the table
+
+                    parsed = replace(parsed, season=season, episode=episode)
+                else:
+                    # For movies/anime movies, avoid carrying episodic fields into naming.
+                    if parsed.season is not None or parsed.episode is not None or parsed.episode_title:
+                        parsed = replace(parsed, season=None, episode=None, episode_title=None)
 
                 if mtype == MediaType.MOVIE and parsed.year is None and parsed.title:
                     year = self._try_fill_movie_year(parsed.title)
@@ -1035,7 +1043,7 @@ QTableWidget::item:hover {
 
         new_items: List[MediaItem] = []
         new_override: Dict[str, Path] = {}
-        new_locked: Set[str] = set()
+        new_locked: Set[str] = {}
         new_manual_types: Dict[str, MediaType] = {}
 
         for item in self._items:
