@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QLabel, QMessageBox, QAbstractItemView, QHeaderView, QStatusBar,
     QComboBox, QLineEdit, QMenu, QInputDialog,
-    QDialog, QTextBrowser, QDialogButtonBox
+    QDialog, QTextBrowser, QDialogButtonBox, QListWidget, QListWidgetItem
 )
 
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ from reelrename_app.ui.theme import dark_palette, light_palette
 from reelrename_app.core.parser import parse_filename
 from reelrename_app.core.classifier import classify, MediaType
 from reelrename_app.core.cache import YearCache
-from reelrename_app.core.providers.tmdb import TmdbClient
+from reelrename_app.core.providers.tmdb import TmdbClient, TmdbSearchResult
 
 from reelrename_app.core.templates import build_destination
 from reelrename_app.core.renamer import build_rename_plan_paths, execute_plan, undo_ops
@@ -32,7 +32,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.13"  # bump as you like
+APP_VERSION = "1.2.14"  # bump as you like
 
 # Strips season numbers, year, and quality tags from a download folder name
 # so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
                 library_root=self._library_root() if self._move_enabled() else None,
                 move_enabled=self._move_enabled(),
             )
-            self._override_dst[key] = auto_dest
+            self._override_dst[key] = auto_dst
         self._render_table()
         self.table.clearSelection()
         self.table.viewport().update()
@@ -182,6 +182,8 @@ class MainWindow(QMainWindow):
         self._override_dst: Dict[str, Path] = {}
         self._locked: Set[str] = set()
         self._manual_types: Dict[str, MediaType] = {}
+        self._manual_titles: Dict[str, str] = {}
+        self._manual_years: Dict[str, Optional[int]] = {}
         self._rendering = False
 
         # NEW: edit guard to avoid recursive cellChanged events
@@ -285,6 +287,16 @@ class MainWindow(QMainWindow):
         self.btn_apply_bulk = QPushButton("Preview Bulk Rename")
         self.btn_apply_bulk.setToolTip("Preview and set proposed names for all items in the list. No files are changed yet.")
         bulk_row.addWidget(self.btn_apply_bulk)
+
+        bulk_row.addSpacing(12)
+        bulk_row.addWidget(QLabel("TMDb Search:"))
+        self.tmdb_search_edit = QLineEdit()
+        self.tmdb_search_edit.setPlaceholderText("Search movie / TV / anime title")
+        self.tmdb_search_edit.setFixedWidth(280)
+        self.btn_tmdb_search = QPushButton("Search")
+        self.btn_tmdb_search.setToolTip("Search TMDb and apply selected result to selected rows (or all rows if none selected)")
+        bulk_row.addWidget(self.tmdb_search_edit)
+        bulk_row.addWidget(self.btn_tmdb_search)
         bulk_row.addStretch(1)
 
         # Add tooltip to Rename button for clarity
@@ -351,6 +363,8 @@ QTableWidget::item:hover {
 
         # Connect bulk rename button
         self.btn_apply_bulk.clicked.connect(self._apply_bulk_season_episode)
+        self.btn_tmdb_search.clicked.connect(self._search_tmdb_interactive)
+        self.tmdb_search_edit.returnPressed.connect(self._search_tmdb_interactive)
 
         self._on_mode_changed()
         self._toggle_current_folder()
@@ -616,6 +630,113 @@ QTableWidget::item:hover {
         else:
             QMessageBox.information(self, "No New Files", "Those files are already in the list.")
 
+    def _tmdb_target_rows(self) -> List[int]:
+        """Selected row indexes, or all rows if none are selected."""
+        selected = sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
+        if selected:
+            return [r for r in selected if 0 <= r < len(self._items)]
+        return list(range(len(self._items)))
+
+    def _tmdb_default_query(self) -> str:
+        rows = self._tmdb_target_rows()
+        if not rows:
+            return ""
+        item = self._items[rows[0]]
+        key = self._item_key(item)
+        if key in self._manual_titles and self._manual_titles[key]:
+            return self._manual_titles[key]
+        parsed = parse_filename(item.path.stem)
+        if parsed.title and parsed.title != "Unknown Title":
+            return _folder_show_title(parsed.title)
+        return _folder_show_title(item.path.parent.name)
+
+    def _pick_tmdb_result(self, results: List[TmdbSearchResult]) -> Optional[TmdbSearchResult]:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("TMDb Search Results")
+        dlg.resize(760, 460)
+
+        layout = QVBoxLayout(dlg)
+        info = QLabel("Select a TMDb result to apply to the selected list items")
+        layout.addWidget(info)
+
+        lst = QListWidget()
+        for r in results:
+            kind = "Movie" if r.media_type == "movie" else "TV"
+            year = f" ({r.year})" if r.year else ""
+            item = QListWidgetItem(f"[{kind}] {r.title}{year}  •  id:{r.tmdb_id}")
+            item.setData(Qt.UserRole, r)
+            lst.addItem(item)
+        if lst.count() > 0:
+            lst.setCurrentRow(0)
+        layout.addWidget(lst, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+
+        cur = lst.currentItem()
+        if cur is None:
+            return None
+        return cur.data(Qt.UserRole)
+
+    def _search_tmdb_interactive(self) -> None:
+        if not self._items:
+            QMessageBox.information(self, "TMDb Search", "Load at least one media item first.")
+            return
+
+        if not self.tmdb.is_configured():
+            QMessageBox.warning(self, "TMDb Search", "TMDB_API_KEY not set. Use Connect → Set TMDb API Key first.")
+            return
+
+        query = self.tmdb_search_edit.text().strip()
+        if not query:
+            query = self._tmdb_default_query()
+            self.tmdb_search_edit.setText(query)
+        if not query:
+            QMessageBox.information(self, "TMDb Search", "Enter a title to search.")
+            return
+
+        results = self.tmdb.search_multi(query)
+        if not results:
+            QMessageBox.information(self, "TMDb Search", f'No results found for "{query}".')
+            return
+
+        chosen = self._pick_tmdb_result(results)
+        if chosen is None:
+            return
+
+        rows = self._tmdb_target_rows()
+        if not rows:
+            return
+
+        applied = 0
+        for r in rows:
+            item = self._items[r]
+            key = self._item_key(item)
+
+            self._manual_titles[key] = chosen.title
+            self._manual_years[key] = chosen.year
+
+            if chosen.media_type == "movie":
+                self._manual_types[key] = MediaType.MOVIE
+            else:
+                existing = self._manual_types.get(key)
+                if existing in (MediaType.ANIME,):
+                    self._manual_types[key] = MediaType.ANIME
+                else:
+                    self._manual_types[key] = MediaType.TV
+
+            # clear stale manual destination so selected TMDb title can regenerate preview
+            self._override_dst.pop(key, None)
+            applied += 1
+
+        self.statusBar().showMessage(f'Applied TMDb selection "{chosen.title}" to {applied} item(s).', 6000)
+        self._render_table()
+
     def _try_fill_movie_year(self, title: str) -> int | None:
         cached = self.year_cache.get_movie_year(title)
         if cached:
@@ -707,6 +828,12 @@ QTableWidget::item:hover {
 
                 # Manual type selection always takes priority over auto-detection
                 mtype = self._manual_types.get(key, mtype)
+
+                # Apply manual title/year overrides from TMDb interactive selection.
+                if key in self._manual_titles and self._manual_titles[key]:
+                    parsed = replace(parsed, title=self._manual_titles[key])
+                if key in self._manual_years:
+                    parsed = replace(parsed, year=self._manual_years[key])
 
                 # If the parsed title is missing or generic, use the show folder (grandparent if parent is a season folder)
                 effective_title = parsed.title
@@ -821,6 +948,8 @@ QTableWidget::item:hover {
         self._override_dst.clear()
         self._locked.clear()
         self._manual_types.clear()
+        self._manual_titles.clear()
+        self._manual_years.clear()
         self.table.setRowCount(0)
         self._update_status()
         self._refresh_buttons()
@@ -938,6 +1067,11 @@ QTableWidget::item:hover {
         stem = item.path.stem
         parsed = parse_filename(stem)
         title = parsed.title
+
+        key = self._item_key(item)
+        if key in self._manual_titles and self._manual_titles[key]:
+            title = self._manual_titles[key]
+
         if not title or title == "Unknown Title" or title == stem:
             parent_name = item.path.parent.name
             if parent_name.lower().startswith("season ") and item.path.parent.parent != item.path.parent:
@@ -1045,6 +1179,8 @@ QTableWidget::item:hover {
         new_override: Dict[str, Path] = {}
         new_locked: Set[str] = {}
         new_manual_types: Dict[str, MediaType] = {}
+        new_manual_titles: Dict[str, str] = {}
+        new_manual_years: Dict[str, Optional[int]] = {}
 
         for item in self._items:
             old_key = self._item_key(item)
@@ -1059,11 +1195,17 @@ QTableWidget::item:hover {
                 new_locked.add(new_key)
             if old_key in self._manual_types:
                 new_manual_types[new_key] = self._manual_types[old_key]
+            if old_key in self._manual_titles:
+                new_manual_titles[new_key] = self._manual_titles[old_key]
+            if old_key in self._manual_years:
+                new_manual_years[new_key] = self._manual_years[old_key]
 
         self._items = new_items
         self._override_dst = new_override
         self._locked = new_locked
         self._manual_types = new_manual_types
+        self._manual_titles = new_manual_titles
+        self._manual_years = new_manual_years
 
         self._render_table()
         QMessageBox.information(self, "Complete", f"Applied: {len(ops)}\nSkipped/Conflicts: {bad_count}")

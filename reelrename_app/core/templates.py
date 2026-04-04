@@ -48,6 +48,24 @@ def build_destination(
     new_filename = sanitize_component(new_filename)
 
     if not move_enabled or library_root is None:
+        # In-place behavior for movies: ensure file sits inside its own movie folder.
+        if media_type == MediaType.MOVIE:
+            title = sanitize_component(parsed.title or "Unknown Title")
+            folder = title
+            if parsed.year:
+                folder = sanitize_component(f"{title} ({parsed.year})")
+            dest_dir = src.parent if src.parent.name == folder else (src.parent / folder)
+            return (dest_dir / new_filename).resolve()
+
+        # In-place behavior for anime movies: ensure file sits inside its own movie folder.
+        if media_type == MediaType.ANIME_MOVIE:
+            title = sanitize_component(parsed.title or "Unknown Anime Movie")
+            folder = title
+            if parsed.year:
+                folder = sanitize_component(f"{title} ({parsed.year})")
+            dest_dir = src.parent if src.parent.name == folder else (src.parent / folder)
+            return (dest_dir / new_filename).resolve()
+
         return (src.parent / new_filename).resolve()
 
     root = library_root.resolve()
