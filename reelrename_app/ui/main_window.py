@@ -32,7 +32,7 @@ from reelrename_app.core.history import save_last_run, load_last_run, clear_last
 
 
 APP_NAME = "ReelRename"
-APP_VERSION = "1.2.16"  # bump as you like
+APP_VERSION = "1.2.17"  # bump as you like
 
 # Strips season numbers, year, and quality tags from a download folder name
 # so that "Yellowstone Season 2 WEBRip" and "Yellowstone Season 3 1080p"
@@ -72,6 +72,13 @@ def _episode_from_suffix(stem: str, parsed_episode: Optional[int]) -> Optional[i
 
     # Otherwise treat the suffix as the episode itself.
     return suffix_num
+
+
+def _split_trailing_suffix(stem: str) -> tuple[str, Optional[int]]:
+    m = _TRAILING_NUM_SUFFIX_RE.search(stem)
+    if not m:
+        return stem, None
+    return stem[:m.start()], int(m.group(1))
 
 
 def _folder_show_title(folder_name: str) -> str:
@@ -208,7 +215,7 @@ class MainWindow(QMainWindow):
         self.action_toggle_folder.triggered.connect(self._toggle_current_folder)
         view_menu.addAction(self.action_toggle_folder)
 
-        # Connect menu
+        # Connect menu = self.menuBar().addMenu("Connect")
         connect_menu = self.menuBar().addMenu("Connect")
         self.action_set_tmdb_key = QAction("Set TMDb API Key…", self)
         self.action_set_tmdb_key.triggered.connect(self._set_tmdb_api_key)
@@ -804,6 +811,32 @@ QTableWidget::item:hover {
                     "Move mode enabled: select a valid Library Root to preview destinations.", 8000
                 )
 
+            # Group files by parent + base stem (stem without trailing -NN)
+            # to support packs where one file has no suffix and peers use -01/-02.
+            groups: Dict[tuple[str, str], Dict[str, bool]] = {}
+            for it in self._items:
+                base_stem, suffix_num = _split_trailing_suffix(it.path.stem)
+                gkey = (str(it.path.parent).lower(), base_stem.lower())
+                g = groups.setdefault(gkey, {"has_base": False, "has_suffix": False})
+                if suffix_num is None:
+                    g["has_base"] = True
+                else:
+                    g["has_suffix"] = True
+
+            suffix_episode_overrides: Dict[str, int] = {}
+            for it in self._items:
+                key_i = self._item_key(it)
+                base_stem, suffix_num = _split_trailing_suffix(it.path.stem)
+                gkey = (str(it.path.parent).lower(), base_stem.lower())
+                g = groups.get(gkey, {"has_base": False, "has_suffix": False})
+
+                if suffix_num is None:
+                    # Base file with suffixed siblings => E01
+                    if g["has_base"] and g["has_suffix"]:
+                        suffix_episode_overrides[key_i] = 1
+                else:
+                    # If base exists, shift suffixed files by +1: -01=>E02
+                    suffix_episode_overrides[key_i] = (suffix_num + 1) if g["has_base"] else suffix_num
 
             for item in self._items:
                 r = self.table.rowCount()
@@ -864,8 +897,12 @@ QTableWidget::item:hover {
                     if not season:
                         season = 1
 
-                    # Auto-detect episode from filename/suffix or use file order if missing
-                    episode = _episode_from_suffix(stem, parsed.episode)
+                    # Auto-detect episode from parser/suffix/grouped-suffix or use file order if missing
+                    episode = parsed.episode
+                    if not episode:
+                        episode = suffix_episode_overrides.get(key)
+                    if not episode:
+                        episode = _episode_from_suffix(stem, parsed.episode)
                     if not episode:
                         episode = r + 1  # 1-based index in the table
 
